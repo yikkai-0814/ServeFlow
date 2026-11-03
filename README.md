@@ -29,8 +29,9 @@ shared touch device, move them through the kitchen and record payment; an admini
 the menu, cost prices and till operators, and reads the day's takings, cost and estimated profit.
 
 It is a React single-page application running directly on Firebase Authentication and Cloud
-Firestore. There is no application server and no Cloud Functions: Firestore security rules are
-the authorization boundary, and the app is served from Firebase Hosting.
+Firestore, served from Firebase Hosting. Firestore security rules are the authorization
+boundary. The one exception is the Admin PIN for authorising a void: checking a PIN safely needs
+a trusted server, so three small Cloud Functions in `functions/` do that and nothing else.
 
 There are no customer accounts. Everyone who signs in works for the business, as either
 **Staff** or **Admin**.
@@ -194,7 +195,16 @@ Browser (React SPA)
 - **Enforcement.** Route guards (`RequireAuth`, `RequireRole`) keep people out of screens they
   cannot use, but the real boundary is `firestore.rules`: a staff account cannot read cost data,
   edit the menu or void a sale however the request is made.
-- **Manager authorisation.** When staff start a void, an administrator signs in on a second,
+- **Admin PIN for voids.** When staff start a void, an administrator enters their own six-digit
+  PIN. The PIN is checked by a Cloud Function, never in the browser: PINs are stored only as
+  salted scrypt hashes in `adminPins/{uid}`, which no client can read or write. The function
+  derives who is asking from the signed-in token, re-checks every condition the void rule
+  imposes, and writes the same `orderVoids` record as before. Five wrong PINs lock that signed-in
+  account's PIN attempts for 15 minutes; failures across all accounts are logged as a warning
+  once they pass 15 in an hour, without locking anyone else out. Admins set or change their own
+  PIN in Settings after re-entering their password; no two admins may share a PIN.
+- **Manager sign-in (fallback).** Until an administrator has set a PIN, or if the functions
+  cannot be reached, a void is authorised as before: an administrator signs in on a second,
   in-memory Firebase Auth session that exists only for that one write. The till's own session is
   never elevated.
 - **Till operators** chosen on the device are a record of who did what, not an authorization
@@ -250,11 +260,11 @@ To add a language, add its code, endonym and tag in `src/features/i18n/languages
 
 ### Prerequisites
 
-| Requirement         | Notes                               |
-| ------------------- | ----------------------------------- |
-| Node.js 22 or newer | Developed on Node 24.               |
-| JDK 21 or newer     | Required by the Firebase emulators. |
-| A Firebase project  | The free Spark plan is sufficient.  |
+| Requirement         | Notes                                                                      |
+| ------------------- | -------------------------------------------------------------------------- |
+| Node.js 22 or newer | Developed on Node 24. The Cloud Functions run on Node 22.                  |
+| JDK 21 or newer     | Required by the Firebase emulators.                                        |
+| A Firebase project  | Spark is enough locally; deploying the Admin PIN functions requires Blaze. |
 
 The Firebase CLI is a dev dependency, so nothing needs installing globally; run it with `npx`.
 
@@ -279,25 +289,30 @@ The Firebase CLI is a dev dependency, so nothing needs installing globally; run 
 ### Running locally
 
 ```bash
-npm run emulators   # Auth, Firestore and the Emulator UI (ports in firebase.json)
-npm run dev         # Vite dev server
+npm --prefix functions install   # once: the Cloud Functions' own dependencies
+npm run emulators                # builds functions/, then Auth, Firestore, Functions and the UI
+npm run dev                      # Vite dev server
 ```
 
-Emulator data is held in memory and is lost when the emulators stop.
+The emulators run as the local-only project `demo-serveflow` (a `demo-` id can never reach a
+real Firebase project). Set `VITE_FIREBASE_PROJECT_ID=demo-serveflow` in `.env.local` so the app,
+the Auth emulator and the Functions emulator all use the same project. Emulator data is held in
+memory and is lost when the emulators stop.
 
 ### Scripts
 
-| Command                | Purpose                             |
-| ---------------------- | ----------------------------------- |
-| `npm run dev`          | Start the Vite dev server           |
-| `npm run build`        | Type-check and build for production |
-| `npm run preview`      | Serve the production build locally  |
-| `npm run typecheck`    | TypeScript project build (`tsc -b`) |
-| `npm run lint`         | Lint with oxlint                    |
-| `npm run format`       | Format with Prettier                |
-| `npm run format:check` | Check formatting                    |
-| `npm run emulators`    | Start the Firebase emulators        |
-| `npm test`             | Run every test suite                |
+| Command                   | Purpose                              |
+| ------------------------- | ------------------------------------ |
+| `npm run dev`             | Start the Vite dev server            |
+| `npm run build`           | Type-check and build for production  |
+| `npm run preview`         | Serve the production build locally   |
+| `npm run typecheck`       | TypeScript: the app and `functions/` |
+| `npm run build:functions` | Compile the Cloud Functions          |
+| `npm run lint`            | Lint with oxlint                     |
+| `npm run format`          | Format with Prettier                 |
+| `npm run format:check`    | Check formatting                     |
+| `npm run emulators`       | Build functions, start the emulators |
+| `npm test`                | Run every test suite                 |
 
 ## Testing
 
@@ -307,10 +322,11 @@ Emulator data is held in memory and is lost when the emulators stop.
 | `npm run test:components`  | React components in jsdom with Testing Library                   |
 | `npm run test:rules`       | `firestore.rules` against the Firestore emulator                 |
 | `npm run test:integration` | The app's write APIs against the Firestore and Auth emulators    |
+| `npm run test:functions`   | The Admin PIN Cloud Functions against all three emulators        |
 
-All suites run on Vitest. The rules and integration suites start their own emulators with
-`firebase emulators:exec`, so stop `npm run emulators` before running them. Each suite uses its
-own test project id, so none of them can reach a real project.
+All suites run on Vitest. The rules, integration and functions suites start their own emulators
+with `firebase emulators:exec`, so stop `npm run emulators` before running them. Each suite uses
+its own test project id, so none of them can reach a real project.
 
 ## Deployment
 
@@ -326,6 +342,13 @@ separately when they change:
 
 ```bash
 npx firebase deploy --only firestore:rules
+```
+
+The Admin PIN functions need the **Blaze (pay-as-you-go)** plan to deploy; local development and
+the emulators do not. Deploy them together with the Hosting build that calls them:
+
+```bash
+npx firebase deploy --only functions,hosting
 ```
 
 ## Known limitations

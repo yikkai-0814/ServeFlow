@@ -39,9 +39,12 @@ import {
   PAYMENT_LABEL_KEYS,
   type PaymentMethod,
 } from '@/features/pos/types'
+import { useAdminPinAvailable } from '@/features/pos/useAdminPinAvailable'
 import { useOrderDetail } from '@/features/pos/useOrderDetail'
 import { voidOrder } from '@/features/pos/void-api'
-import { VoidOrderDialog, type ManagerCredentials } from '@/features/pos/VoidOrderDialog'
+import { voidOrderWithAdminPin } from '@/features/pos/void-pin-api'
+import { VoidOrderDialog } from '@/features/pos/VoidOrderDialog'
+import { isAdminPin, type VoidAuthorization } from '@/features/pos/voids'
 import { lineKeyOf } from '@/features/menu/modifiers'
 import { formatMoney } from '@/lib/money'
 
@@ -60,6 +63,8 @@ export function OrderDetailPage() {
   // One order and its three sidecars, by id — never the whole collection. A receipt is
   // about exactly one sale, and this page used to load every order ever written to find it.
   const { view, loading } = useOrderDetail(orderId)
+  // Only staff need authorising; an admin voids with their own session.
+  const pinAvailable = useAdminPinAvailable(role === 'staff')
   const [advancing, setAdvancing] = useState(false)
   const [error, setError] = useState<Message | null>(null)
 
@@ -221,12 +226,15 @@ export function OrderDetailPage() {
   }
 
   /**
-   * Two routes to the same record.
+   * Three routes to the same record.
    *
-   * An admin writes it with their own session. Anyone else hands a manager's credentials to
+   * An admin writes it with their own session. Staff with an admin's PIN ask the server
+   * (`voidOrderWithAdminPin`), which checks the PIN and writes the void itself, deriving who
+   * asked from the signed-in token — the till sends only the selected operator's roster id.
+   * Otherwise — the fallback while no admin has set a PIN — a manager's credentials go to
    * `withManagerAuthorization`, which borrows that manager's authority for exactly one write
-   * and gives it back — the till's session is never elevated, and `voidOrder` is the same
-   * writer either way, so the two routes cannot produce differently shaped voids.
+   * and gives it back; the till's session is never elevated, and `voidOrder` is the same
+   * writer as the admin route, so the routes cannot produce differently shaped voids.
    *
    * Both record the same initiator a payment or a fulfilment step records — `payer`: the
    * selected operator, or the signed-in account when nobody has been picked — so an admin's
@@ -236,15 +244,21 @@ export function OrderDetailPage() {
    *
    * Never a silent return: the dialog reads a normal return as "voided" and closes.
    */
-  async function handleVoid(reason: string, credentials: ManagerCredentials | null) {
+  async function handleVoid(reason: string, authorization: VoidAuthorization | null) {
     if (!profile || !order || !payer) throw new MessageError(message('order.voidFailed'))
     setError(null)
 
     const initiatedBy = { staffId: payer.id, staffName: payer.name }
 
     try {
-      if (credentials) {
-        await withManagerAuthorization(credentials, (manager, firestore) =>
+      if (authorization && isAdminPin(authorization)) {
+        await voidOrderWithAdminPin(order.id, {
+          reason,
+          pin: authorization.pin,
+          operatorId: operator?.id ?? null,
+        })
+      } else if (authorization) {
+        await withManagerAuthorization(authorization, (manager, firestore) =>
           voidOrder(
             order.id,
             {
@@ -567,6 +581,7 @@ export function OrderDetailPage() {
             orderNumber={order.number}
             amount={order.total}
             requiresAuthorization={!isAdmin}
+            pinAvailable={pinAvailable}
             onConfirm={handleVoid}
           />
         )}

@@ -1,6 +1,6 @@
 import { isMessageError, message, type Message } from '@/features/i18n/messages'
 import { useTranslation } from '@/features/i18n/useTranslation'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { AlertCircle, Ban, ShieldCheck } from 'lucide-react'
 
 import {
@@ -18,13 +18,17 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
+import { PinInput } from '@/features/pos/PinInput'
 import {
+  ADMIN_PIN_LENGTH,
   findVoidReasonPreset,
   resolveVoidReason,
+  validateAdminPin,
   validateManagerCredentials,
   VOID_REASON_MAX,
   VOID_REASON_OTHER,
   VOID_REASON_PRESETS,
+  type VoidAuthorization,
 } from '@/features/pos/voids'
 import { formatMoney } from '@/lib/money'
 
@@ -43,13 +47,15 @@ export interface ManagerCredentials {
  * before it is written, and what reaches `onConfirm` is the same single string it always was.
  *
  * Two shapes, one dialog. An admin voids their own sale in a single step, exactly as before.
- * Anyone else gets a second step asking a manager to sign in — `requiresAuthorization` is
- * the only difference, and it is decided by the caller from the signed-in role.
+ * Anyone else gets a second step asking an administrator to authorise it — `requiresAuthorization`
+ * is the only difference, and it is decided by the caller from the signed-in role.
  *
- * The credentials are held in component state for the moment it takes to use them, passed to
- * `onConfirm`, and cleared whenever the dialog closes — including when it closes because the
- * void succeeded. Nothing here decides whether they are a manager's; that is settled by
- * Firebase Auth and then by firestore.rules, which is the point of the design.
+ * That second step asks for an administrator's six-digit PIN once one has been set
+ * (`pinAvailable`), and otherwise for a manager's email and password, as before — the fallback
+ * until PIN setup exists. Either way the secret is held in component state only for the
+ * moment it takes to use it, passed to `onConfirm`, and cleared whenever the dialog closes or
+ * a submission fails. Nothing here decides whether it is valid: a PIN is checked by the server
+ * (functions/), a password by Firebase Auth and then firestore.rules.
  *
  * Uses a plain confirm button rather than `AlertDialogAction`, because the dialog must stay
  * open when validation fails — `AlertDialogAction` closes on click, which would swallow the
@@ -59,12 +65,15 @@ export function VoidOrderDialog({
   orderNumber,
   amount,
   requiresAuthorization,
+  pinAvailable = false,
   onConfirm,
 }: {
   orderNumber: number
   amount: number
   requiresAuthorization: boolean
-  onConfirm: (reason: string, credentials: ManagerCredentials | null) => Promise<void>
+  /** An administrator has set a PIN, so the second step asks for one instead of a sign-in. */
+  pinAvailable?: boolean
+  onConfirm: (reason: string, authorization: VoidAuthorization | null) => Promise<void>
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -73,8 +82,14 @@ export function VoidOrderDialog({
   const [customReason, setCustomReason] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [pin, setPin] = useState('')
   const [error, setError] = useState<Message | null>(null)
   const [pending, setPending] = useState(false)
+  /**
+   * Set synchronously, unlike `pending`, so a second tap or Enter that lands before the button
+   * re-renders as disabled cannot send the void — and spend a PIN attempt — twice.
+   */
+  const submitting = useRef(false)
 
   function reset(nextOpen: boolean) {
     setOpen(nextOpen)
@@ -84,8 +99,15 @@ export function VoidOrderDialog({
       setCustomReason('')
       setEmail('')
       setPassword('')
+      setPin('')
       setError(null)
     }
+  }
+
+  /** Not while a void is being written: it may still land, and closing would hide that. */
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen && submitting.current) return
+    reset(nextOpen)
   }
 
   const preset = findVoidReasonPreset(presetId)
@@ -120,6 +142,16 @@ export function VoidOrderDialog({
       return
     }
 
+    if (pinAvailable) {
+      const validatedPin = validateAdminPin(pin)
+      if (!validatedPin.ok) {
+        setError(validatedPin.error)
+        return
+      }
+      await submit(validatedReason.reason, { pin: validatedPin.pin })
+      return
+    }
+
     const credentials = validateManagerCredentials(email, password)
     if (!credentials.ok) {
       setError(credentials.error)
@@ -132,23 +164,27 @@ export function VoidOrderDialog({
     })
   }
 
-  async function submit(validReason: string, credentials: ManagerCredentials | null) {
+  async function submit(validReason: string, authorization: VoidAuthorization | null) {
+    if (submitting.current) return
+    submitting.current = true
     setError(null)
     setPending(true)
     try {
-      await onConfirm(validReason, credentials)
+      await onConfirm(validReason, authorization)
       reset(false)
     } catch (caught) {
       setError(isMessageError(caught) ? caught.detail : message('order.voidFailed'))
-      // Keep the reason so nothing has to be retyped, but never keep the password.
+      // Keep the reason so nothing has to be retyped, but never keep the password or PIN.
       setPassword('')
+      setPin('')
     } finally {
+      submitting.current = false
       setPending(false)
     }
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={reset}>
+    <AlertDialog open={open} onOpenChange={handleOpenChange}>
       <AlertDialogTrigger asChild>
         <Button
           variant="destructive"
@@ -163,14 +199,19 @@ export function VoidOrderDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {t(step === 'reason' ? 'void.confirmTitle' : 'void.managerTitle', {
-              number: orderNumber,
-            })}
+            {t(
+              step === 'reason'
+                ? 'void.confirmTitle'
+                : pinAvailable
+                  ? 'void.pinTitle'
+                  : 'void.managerTitle',
+              { number: orderNumber },
+            )}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {step === 'reason'
               ? t('void.blurb', { amount: formatMoney(amount) })
-              : t('void.managerBlurb')}
+              : t(pinAvailable ? 'void.pinBlurb' : 'void.managerBlurb')}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -214,6 +255,26 @@ export function VoidOrderDialog({
                 />
               </div>
             )}
+          </div>
+        ) : pinAvailable ? (
+          <div className="grid gap-2">
+            <Label htmlFor="admin-pin">{t('void.pinLabel')}</Label>
+            {/* Masked, digits only, numeric keypad on a tablet. Never autofilled or remembered
+                by the browser: it is somebody else's secret, typed on a shared till. */}
+            <PinInput
+              id="admin-pin"
+              data-testid="admin-pin"
+              describedBy="admin-pin-hint"
+              value={pin}
+              onChange={setPin}
+              onEnter={() => void handleAuthorizeStep()}
+              invalid={error !== null}
+              disabled={pending}
+              autoFocus
+            />
+            <p id="admin-pin-hint" className="text-xs text-muted-foreground">
+              {t('void.pinHint', { length: ADMIN_PIN_LENGTH })}
+            </p>
           </div>
         ) : (
           <div className="grid gap-4">
@@ -277,7 +338,8 @@ export function VoidOrderDialog({
           ) : (
             <Button
               variant="destructive"
-              disabled={pending}
+              // With a PIN, nothing to send until all six digits are in.
+              disabled={pending || (pinAvailable && pin.length < ADMIN_PIN_LENGTH)}
               data-testid="confirm-void"
               onClick={() => void handleAuthorizeStep()}
             >

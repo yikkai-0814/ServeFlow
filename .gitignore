@@ -19,6 +19,8 @@ dist-ssr
 
 # Firebase
 .firebase/
+# Compiled Cloud Functions — built from functions/src by `npm run build:functions`
+functions/lib/
 firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*

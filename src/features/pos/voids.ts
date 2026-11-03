@@ -75,6 +75,43 @@ export function validateManagerCredentials(
   return { ok: true, email: trimmed, password }
 }
 
+/** An admin PIN is exactly six digits. Mirrors PIN_PATTERN in functions/src/pin.ts. */
+export const ADMIN_PIN_LENGTH = 6
+
+export type AdminPinResult = { ok: true; pin: string } | { ok: false; error: Message }
+
+/**
+ * Checks that six digits were entered before anything is sent.
+ *
+ * Like `validateManagerCredentials`, this decides nothing about whether the PIN is right —
+ * only the server knows that, and it never tells the app what a PIN is. It saves a round trip
+ * and an attempt from the lockout count on a PIN that is simply the wrong length.
+ */
+export function validateAdminPin(input: string): AdminPinResult {
+  if (input === '') return { ok: false, error: message('validation.pinRequired') }
+  if (!/^\d{6}$/.test(input)) {
+    return { ok: false, error: message('validation.pinFormat', { length: ADMIN_PIN_LENGTH }) }
+  }
+  return { ok: true, pin: input }
+}
+
+/** An administrator's six-digit PIN, checked by the server — never here. */
+export interface AdminPin {
+  pin: string
+}
+
+/** How a staff member's void is authorised: an admin PIN, or (fallback) a manager sign-in. */
+export type VoidAuthorization = AdminPin | { email: string; password: string }
+
+export function isAdminPin(authorization: VoidAuthorization): authorization is AdminPin {
+  return 'pin' in authorization
+}
+
+/** Keeps only digits, and no more than a PIN's worth — what the PIN fields accept as typed. */
+export function sanitizePinInput(input: string): string {
+  return input.replace(/\D/g, '').slice(0, ADMIN_PIN_LENGTH)
+}
+
 /**
  * Validates the reason an admin gives for voiding a sale.
  *

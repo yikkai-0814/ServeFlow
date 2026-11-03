@@ -26,8 +26,12 @@ const withManagerAuthorization = vi.hoisted(() => vi.fn())
 /** Stands in for the manager session's own Firestore handle. */
 const MANAGER_FIRESTORE = vi.hoisted(() => ({ name: 'manager-session' }))
 
+const voidOrderWithAdminPin = vi.hoisted(() => vi.fn())
+const fetchAdminPinStatus = vi.hoisted(() => vi.fn())
+
 vi.mock('@/features/pos/void-api', () => ({ voidOrder }))
 vi.mock('@/features/pos/manager-authorization', () => ({ withManagerAuthorization }))
+vi.mock('@/features/pos/void-pin-api', () => ({ voidOrderWithAdminPin, fetchAdminPinStatus }))
 vi.mock('@/features/pos/payment-api', () => ({ recordPayment: vi.fn() }))
 vi.mock('@/features/pos/fulfillment-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/pos/fulfillment-api')>()
@@ -129,6 +133,11 @@ beforeEach(() => {
   withManagerAuthorization.mockImplementation(async (_credentials, action) =>
     action({ uid: 'admin-uid', displayName: 'Ada Admin' }, MANAGER_FIRESTORE),
   )
+  voidOrderWithAdminPin.mockReset()
+  voidOrderWithAdminPin.mockResolvedValue(undefined)
+  // No admin PIN set up unless a test says so: the manager sign-in these tests were written for.
+  fetchAdminPinStatus.mockReset()
+  fetchAdminPinStatus.mockResolvedValue({ pinAvailable: false })
 })
 
 describe('an admin voids a sale', () => {
@@ -234,5 +243,83 @@ describe('staff start a void, and a manager authorises it', () => {
 
     expect(voidOrder).not.toHaveBeenCalled()
     expect(screen.getByTestId('manager-email')).not.toBeNull()
+  })
+})
+
+describe('staff start a void, and an administrator authorises it with a PIN', () => {
+  beforeEach(() => {
+    role = 'staff'
+    operator = { id: 's1', name: 'Aisyah', isSelf: false }
+    fetchAdminPinStatus.mockResolvedValue({ pinAvailable: true })
+  })
+
+  /** Reason, then the PIN step once the server has said a PIN exists. */
+  async function authoriseWithPin(user: ReturnType<typeof renderDetail>['user'], pin = '482915') {
+    await startVoid(user)
+    await user.click(screen.getByTestId('continue-void'))
+    await user.type(await screen.findByTestId('admin-pin'), pin)
+    await user.click(screen.getByTestId('confirm-void'))
+  }
+
+  it('asks the server, sending the operator by roster id only — never a name', async () => {
+    const { user } = renderDetail()
+    await authoriseWithPin(user)
+
+    expect(voidOrderWithAdminPin).toHaveBeenCalledOnce()
+    expect(voidOrderWithAdminPin).toHaveBeenCalledWith(ORDER_ID, {
+      reason: 'Wrong item',
+      pin: '482915',
+      operatorId: 's1',
+    })
+    // Neither client-side writer is involved: the server writes the void.
+    expect(voidOrder).not.toHaveBeenCalled()
+    expect(withManagerAuthorization).not.toHaveBeenCalled()
+    await waitFor(() => expect(dialogOpen()).toBe(false))
+  })
+
+  it('sends no operator when nobody is selected, so the server records the account', async () => {
+    operator = null
+    const { user } = renderDetail()
+    await authoriseWithPin(user)
+
+    expect(voidOrderWithAdminPin).toHaveBeenCalledWith(ORDER_ID, {
+      reason: 'Wrong item',
+      pin: '482915',
+      operatorId: null,
+    })
+  })
+
+  it('keeps the dialog open with the server’s reason when the PIN is refused', async () => {
+    const { MessageError, message } = await import('@/features/i18n/messages')
+    voidOrderWithAdminPin.mockRejectedValue(new MessageError(message('void.pinIncorrect')))
+    const { user } = renderDetail()
+    await authoriseWithPin(user, '000000')
+
+    expect(
+      await within(screen.getByRole('alertdialog')).findByText('That PIN is not correct.'),
+    ).not.toBeNull()
+    expect(dialogOpen()).toBe(true)
+  })
+
+  it('falls back to the manager sign-in when the server cannot be reached', async () => {
+    fetchAdminPinStatus.mockRejectedValue(new Error('offline'))
+    const { user } = renderDetail()
+    await startVoid(user)
+    await user.click(screen.getByTestId('continue-void'))
+
+    expect(screen.getByTestId('manager-email')).not.toBeNull()
+    expect(screen.queryByTestId('admin-pin')).toBeNull()
+  })
+
+  it('never asks an admin for a PIN, and never asks the server whether one exists', async () => {
+    role = 'admin'
+    operator = null
+    const { user } = renderDetail()
+    await startVoid(user)
+    await user.click(screen.getByTestId('confirm-void'))
+
+    expect(fetchAdminPinStatus).not.toHaveBeenCalled()
+    expect(voidOrderWithAdminPin).not.toHaveBeenCalled()
+    expect(voidOrder).toHaveBeenCalledOnce()
   })
 })

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Panel } from '@/components/data/Panel'
+import { AdminPinPanel } from '@/features/settings/AdminPinPanel'
 import { validateDisplayName, DISPLAY_NAME_MAX } from '@/features/auth/types'
 import { updateDisplayName } from '@/features/auth/profile-api'
 import { useAuth } from '@/features/auth/useAuth'
@@ -34,6 +35,7 @@ import { cn } from '@/lib/utils'
  */
 export function SettingsPage() {
   const { t } = useTranslation()
+  const { role } = useAuth()
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -45,6 +47,9 @@ export function SettingsPage() {
       </header>
 
       <AccountPanel />
+      {/* An administrator's own void PIN. Not offered to staff: they cannot set one, and the
+          server refuses them regardless. */}
+      {role === 'admin' && <AdminPinPanel />}
       <AppearancePanel />
       <LanguagePanel />
     </div>

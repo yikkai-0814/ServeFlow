@@ -21,6 +21,10 @@ vi.mock('@/features/pos/fulfillment-api', async (importOriginal) => {
   return { ...actual, setFulfillment: vi.fn(), correctFulfillment: vi.fn() }
 })
 vi.mock('@/features/pos/void-api', () => ({ voidOrder: vi.fn() }))
+vi.mock('@/features/pos/void-pin-api', () => ({
+  voidOrderWithAdminPin: vi.fn(),
+  fetchAdminPinStatus: vi.fn(async () => ({ pinAvailable: false })),
+}))
 
 vi.mock('@/features/auth/useAuth', () => ({
   useAuth: () => ({

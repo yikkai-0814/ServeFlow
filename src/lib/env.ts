@@ -70,3 +70,7 @@ export const useEmulators = import.meta.env.VITE_USE_EMULATORS === 'true'
 export const EMULATOR_HOST = '127.0.0.1'
 export const AUTH_EMULATOR_PORT = 9099
 export const FIRESTORE_EMULATOR_PORT = 8080
+export const FUNCTIONS_EMULATOR_PORT = 5001
+
+/** Where the Cloud Functions in functions/ run. Must match setGlobalOptions there. */
+export const FUNCTIONS_REGION = 'asia-southeast1'

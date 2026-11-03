@@ -1036,6 +1036,27 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ---- Admin PIN data (server-only) --------------------------------------
+    // Hashed admin PINs and the counters that stop them being guessed. Only the Cloud
+    // Functions in functions/ read or write these, through the Admin SDK, which is not
+    // governed by these rules. No client may touch them: not staff, and not an admin either —
+    // an admin manages their own PIN through setAdminPin, which never returns a hash.
+    //
+    // The default deny below already refuses them. They are named here so that a broader
+    // match added later cannot open them without this block being read first.
+
+    match /adminPins/{uid} {
+      allow read, write: if false;
+    }
+
+    match /pinAttempts/{id} {
+      allow read, write: if false;
+    }
+
+    match /pinSetupAttempts/{uid} {
+      allow read, write: if false;
+    }
+
     // ---- Default deny ------------------------------------------------------
     // Everything not matched above is refused. Later phases add explicit matches
     // rather than loosening this.

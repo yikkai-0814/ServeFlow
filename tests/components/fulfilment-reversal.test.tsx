@@ -27,6 +27,10 @@ vi.mock('@/features/pos/fulfillment-api', async (importOriginal) => {
 })
 vi.mock('@/features/pos/payment-api', () => ({ recordPayment: vi.fn() }))
 vi.mock('@/features/pos/void-api', () => ({ voidOrder: vi.fn() }))
+vi.mock('@/features/pos/void-pin-api', () => ({
+  voidOrderWithAdminPin: vi.fn(),
+  fetchAdminPinStatus: vi.fn(async () => ({ pinAvailable: false })),
+}))
 
 let role: 'admin' | 'staff' = 'staff'
 vi.mock('@/features/auth/useAuth', () => ({

@@ -313,6 +313,22 @@ export const ms: Dictionary = {
   'void.confirmTitle': 'Batalkan pesanan #{{number}}?',
   'void.managerTitle': 'Kebenaran pengurus untuk pesanan #{{number}}',
   'void.authoriseAndVoid': 'Benarkan dan batalkan',
+  'void.pinTitle': 'PIN pentadbir untuk pesanan #{{number}}',
+  'void.pinBlurb': 'Minta pentadbir memasukkan PIN mereka untuk membenarkan pembatalan ini.',
+  'void.pinLabel': 'PIN pentadbir',
+  'void.pinHint': '{{length}} digit. PIN tidak pernah dipaparkan atau disimpan pada peranti ini.',
+  'void.pinProgress': '{{count}} / {{length}} digit dimasukkan',
+  'void.pinIncorrect': 'PIN itu tidak betul.',
+  'void.pinLocked':
+    'Terlalu banyak PIN yang salah. Cuba lagi dalam {{minutes}} minit, atau minta pentadbir membatalkan jualan melalui log masuk mereka sendiri.',
+  'void.pinNotConfigured':
+    'Tiada PIN pentadbir ditetapkan. Minta pentadbir menetapkannya dalam Tetapan.',
+  'void.pinConflict':
+    'PIN ini tidak dapat mengenal pasti seorang pentadbir sahaja. Seorang pentadbir perlu menukar PIN mereka dalam Tetapan.',
+  'void.alreadyVoided': 'Jualan ini telah pun dibatalkan.',
+  'void.operatorUnavailable':
+    'Orang yang dipilih di kaunter ini tidak lagi aktif. Pilih siapa yang berada di kaunter dan cuba lagi.',
+  'void.pinNotAllowed': 'Akaun ini tidak dibenarkan meminta pembatalan.',
 
   // ---- Menu management -----------------------------------------------------------
   'menu.untitledItem': 'item ini',
@@ -590,6 +606,32 @@ export const ms: Dictionary = {
   'settings.displayName': 'Nama paparan',
   'settings.saved': 'Disimpan',
   'settings.saveFailed': 'Perubahan itu tidak dapat disimpan. Akaun anda mungkin tiada kebenaran.',
+  'settings.pinTitle': 'PIN kebenaran pembatalan',
+  'settings.pinBlurb':
+    'Kakitangan meminta pentadbir memasukkan PIN enam digit ini untuk membatalkan jualan. Ia berasingan daripada kata laluan anda, dan hanya anda boleh menetapkan atau menukarnya.',
+  'settings.pinStatusSet': 'PIN anda telah ditetapkan.',
+  'settings.pinStatusSetOn': 'PIN anda telah ditetapkan. Kali terakhir ditukar {{when}}.',
+  'settings.pinStatusNotSet':
+    'Anda belum menetapkan PIN. Sehingga seorang pentadbir menetapkannya, pembatalan dibenarkan melalui log masuk pengurus.',
+  'settings.pinStatusFailed': 'Tetapan PIN tidak tersedia buat masa ini. Cuba lagi nanti.',
+  'settings.pinSet': 'Tetapkan PIN',
+  'settings.pinChange': 'Tukar PIN',
+  'settings.pinSetTitle': 'Tetapkan PIN pembatalan anda',
+  'settings.pinChangeTitle': 'Tukar PIN pembatalan anda',
+  'settings.pinDialogBlurb':
+    'Masukkan kata laluan akaun anda untuk mengesahkan ini anda, kemudian pilih PIN enam digit. Kata laluan anda tidak berubah.',
+  'settings.pinCurrentPassword': 'Kata laluan anda',
+  'settings.pinNew': 'PIN baharu',
+  'settings.pinConfirm': 'Sahkan PIN baharu',
+  'settings.pinSave': 'Simpan PIN',
+  'settings.pinSaved': 'PIN disimpan',
+  'settings.pinPasswordRequired': 'Masukkan kata laluan anda untuk mengesahkan ini anda.',
+  'settings.pinMismatch': 'Kedua-dua PIN tidak sepadan.',
+  'settings.pinStaleSignIn': 'Sila sahkan kata laluan anda sekali lagi, kemudian simpan.',
+  'settings.pinRateLimited': 'Terlalu banyak pertukaran PIN. Cuba lagi dalam 15 minit.',
+  'settings.pinUnavailable': 'PIN ini tidak boleh digunakan. Pilih PIN yang lain.',
+  'settings.pinNotAllowed': 'Hanya pentadbir yang aktif boleh menetapkan PIN.',
+  'settings.pinSaveFailed': 'PIN tidak dapat disimpan. Semak sambungan anda dan cuba lagi.',
   'settings.appearanceBlurb': 'Palet yang digunakan untuk melukis skrin ini.',
   'settings.languageBlurb':
     'Hanya teks pratakrif yang berubah. Item menu, nama kakitangan dan segala yang ditaip kekal seperti yang dimasukkan.',
@@ -622,6 +664,8 @@ export const ms: Dictionary = {
   // ---- Validation, from the pure modules and the write APIs ----------------------
   'validation.managerEmailRequired': 'Masukkan alamat e-mel pengurus.',
   'validation.managerPasswordRequired': 'Masukkan kata laluan pengurus.',
+  'validation.pinRequired': 'Masukkan PIN pentadbir.',
+  'validation.pinFormat': 'PIN mesti tepat {{length}} digit.',
   'validation.itemNameRequired': 'Masukkan nama untuk item ini.',
   'validation.categoryRequired': 'Pilih kategori.',
   'validation.amountRequired': 'Masukkan jumlah yang diterima.',

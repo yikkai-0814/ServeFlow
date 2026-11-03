@@ -316,6 +316,22 @@ export const en = {
   'void.confirmTitle': 'Void order #{{number}}?',
   'void.managerTitle': 'Manager authorisation for order #{{number}}',
   'void.authoriseAndVoid': 'Authorise and void',
+  'void.pinTitle': 'Admin PIN for order #{{number}}',
+  'void.pinBlurb': 'Ask an administrator to enter their PIN to authorise this void.',
+  'void.pinLabel': 'Admin PIN',
+  'void.pinHint': '{{length}} digits. The PIN is never shown or stored on this device.',
+  'void.pinProgress': '{{count}} / {{length}} digits entered',
+  'void.pinIncorrect': 'That PIN is not correct.',
+  'void.pinLocked':
+    'Too many incorrect PINs. Try again in {{minutes}} minutes, or ask an administrator to void the sale from their own sign-in.',
+  'void.pinNotConfigured':
+    'No administrator PIN is set up. Ask an administrator to set one in Settings.',
+  'void.pinConflict':
+    'This PIN cannot identify a single administrator. An administrator must change their PIN in Settings.',
+  'void.alreadyVoided': 'This sale has already been voided.',
+  'void.operatorUnavailable':
+    'The person selected at this till is no longer active. Choose who is at the till and try again.',
+  'void.pinNotAllowed': 'This account is not allowed to request a void.',
 
   // ---- Menu management -----------------------------------------------------------
   'menu.untitledItem': 'this item',
@@ -589,6 +605,32 @@ export const en = {
   'settings.displayName': 'Display name',
   'settings.saved': 'Saved',
   'settings.saveFailed': 'That change could not be saved. Your account may not have permission.',
+  'settings.pinTitle': 'Void authorisation PIN',
+  'settings.pinBlurb':
+    'Staff ask an administrator to enter this six-digit PIN to void a sale. It is separate from your password, and only you can set or change it.',
+  'settings.pinStatusSet': 'Your PIN is set.',
+  'settings.pinStatusSetOn': 'Your PIN is set. Last changed {{when}}.',
+  'settings.pinStatusNotSet':
+    'You have not set a PIN. Until an administrator sets one, voids are authorised with a manager sign-in.',
+  'settings.pinStatusFailed': 'PIN settings are unavailable right now. Try again later.',
+  'settings.pinSet': 'Set PIN',
+  'settings.pinChange': 'Change PIN',
+  'settings.pinSetTitle': 'Set your void PIN',
+  'settings.pinChangeTitle': 'Change your void PIN',
+  'settings.pinDialogBlurb':
+    'Enter your account password to confirm it is you, then choose a six-digit PIN. Your password does not change.',
+  'settings.pinCurrentPassword': 'Your password',
+  'settings.pinNew': 'New PIN',
+  'settings.pinConfirm': 'Confirm new PIN',
+  'settings.pinSave': 'Save PIN',
+  'settings.pinSaved': 'PIN saved',
+  'settings.pinPasswordRequired': 'Enter your password to confirm it is you.',
+  'settings.pinMismatch': 'The two PINs do not match.',
+  'settings.pinStaleSignIn': 'Please confirm your password again, then save.',
+  'settings.pinRateLimited': 'Too many PIN changes. Try again in 15 minutes.',
+  'settings.pinUnavailable': "This PIN can't be used. Choose a different PIN.",
+  'settings.pinNotAllowed': 'Only an active administrator can set a PIN.',
+  'settings.pinSaveFailed': 'The PIN could not be saved. Check your connection and try again.',
   'settings.appearanceBlurb': 'Which palette this screen is drawn in.',
   'settings.languageBlurb':
     'Only predefined text changes. Menu items, staff names and everything else typed in stay exactly as entered.',
@@ -620,6 +662,8 @@ export const en = {
   // ---- Validation, from the pure modules and the write APIs ----------------------
   'validation.managerEmailRequired': "Enter the manager's email address.",
   'validation.managerPasswordRequired': "Enter the manager's password.",
+  'validation.pinRequired': 'Enter the admin PIN.',
+  'validation.pinFormat': 'The PIN must be exactly {{length}} digits.',
   'validation.itemNameRequired': 'Enter a name for this item.',
   'validation.categoryRequired': 'Choose a category.',
   'validation.amountRequired': 'Enter the amount received.',
