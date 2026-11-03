@@ -139,7 +139,13 @@ export const zh: Dictionary = {
   'terminal.noItems': '目前没有可售项目',
   'terminal.noItemsBlurb': '管理员需要添加菜单项目，或将现有项目设为可售。',
   'terminal.placeFailed': '订单未能提交。',
-  'terminal.unpaidNote': '订单创建时为未付款。付款另行记录。',
+  'terminal.unpaidNote': '下单后，可立即收款，或稍后再收款。',
+  'terminal.paymentDecision': '您希望如何继续？',
+  'terminal.paymentDecisionBlurb': '订单 #{{number}} 已保存 · {{total}} · {{service}}',
+  'terminal.payNow': '立即付款',
+  'terminal.payLater': '稍后付款',
+  'terminal.paidBanner':
+    '订单 #{{number}} 已提交 · {{total}} · {{service}} · 已通过{{method}}付款。',
   'terminal.placedBanner':
     '订单 #{{number}} 已提交 · {{total}} · {{service}} · 未付款。客户付款后请在“订单”页面记录付款。',
   'terminal.placeOrderWithTotal': '下单 · {{total}}',

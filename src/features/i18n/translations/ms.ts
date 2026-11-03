@@ -146,7 +146,14 @@ export const ms: Dictionary = {
   'terminal.noItemsBlurb':
     'Pentadbir perlu menambah item menu, atau menjadikan item sedia ada tersedia.',
   'terminal.placeFailed': 'Pesanan itu tidak dapat dibuat.',
-  'terminal.unpaidNote': 'Pesanan dibuat tanpa bayaran. Bayaran direkodkan secara berasingan.',
+  'terminal.unpaidNote':
+    'Selepas pesanan dibuat, terima bayaran sekarang atau kutip bayaran kemudian.',
+  'terminal.paymentDecision': 'Bagaimana anda mahu teruskan?',
+  'terminal.paymentDecisionBlurb': 'Pesanan #{{number}} telah disimpan · {{total}} · {{service}}',
+  'terminal.payNow': 'Bayar sekarang',
+  'terminal.payLater': 'Bayar kemudian',
+  'terminal.paidBanner':
+    'Pesanan #{{number}} telah dibuat · {{total}} · {{service}} · dibayar melalui {{method}}.',
   'terminal.placedBanner':
     'Pesanan #{{number}} telah dibuat · {{total}} · {{service}} · belum dibayar. Rekod bayaran dari halaman Pesanan setelah pelanggan membayar.',
   'terminal.placeOrderWithTotal': 'Buat pesanan · {{total}}',

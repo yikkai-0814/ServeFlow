@@ -152,9 +152,14 @@ export const en = {
   'terminal.noItemsBlurb':
     'An administrator needs to add menu items, or make existing ones available.',
   'terminal.placeFailed': 'The order could not be placed.',
-  'terminal.unpaidNote': 'The order is created unpaid. Payment is recorded separately.',
+  'terminal.unpaidNote': 'Once the order is placed, take payment now or collect it later.',
   'terminal.placedBanner':
     'Order #{{number}} placed · {{total}} · {{service}} · unpaid. Record payment from the Orders page once the customer has paid.',
+  'terminal.paymentDecision': 'How would you like to proceed?',
+  'terminal.paymentDecisionBlurb': 'Order #{{number}} is saved · {{total}} · {{service}}',
+  'terminal.payNow': 'Pay now',
+  'terminal.payLater': 'Pay later',
+  'terminal.paidBanner': 'Order #{{number}} placed · {{total}} · {{service}} · paid by {{method}}.',
   'terminal.placeOrderWithTotal': 'Place order · {{total}}',
   'terminal.reviewOrder': 'Review order',
 

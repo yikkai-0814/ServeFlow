@@ -1,6 +1,6 @@
 import { isMessageError, message, type Message } from '@/features/i18n/messages'
 import { useTranslation } from '@/features/i18n/useTranslation'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { AlertCircle, Wallet } from 'lucide-react'
 
 import {
@@ -31,29 +31,48 @@ import { CURRENCY_PREFIX, formatMoney, parsePriceInput } from '@/lib/money'
  * A plain confirm button rather than `AlertDialogAction`, for the same reason as
  * `VoidOrderDialog`: the dialog has to stay open when a tendered amount is refused, and
  * `AlertDialogAction` closes on click, which would swallow the message before it was read.
+ *
+ * Two ways to open it. On an order's page it brings its own Record Payment button. New Order
+ * passes `open` instead, because there the question has already been asked ("Pay now"), and
+ * a second button to press would only be a step in the way. `onDismiss` then reports a close
+ * that did NOT come from a recorded payment — Cancel, Escape — so the caller can tell the
+ * two apart; a successful payment closes through `onConfirm` resolving, never through it.
  */
 export function RecordPaymentDialog({
   orderNumber,
   total,
   onConfirm,
+  open: controlledOpen,
+  onDismiss,
 }: {
   orderNumber: number
   total: number
   onConfirm: (method: PaymentMethod, cashTendered: number | null) => Promise<void>
+  /** Opened by the caller rather than by its own button. */
+  open?: boolean
+  /** Closed without a payment being recorded. */
+  onDismiss?: () => void
 }) {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
+  const [ownOpen, setOwnOpen] = useState(false)
+  const open = controlledOpen ?? ownOpen
   const [method, setMethod] = useState<PaymentMethod>('cash')
   const [tenderText, setTenderText] = useState('')
   const [error, setError] = useState<Message | null>(null)
   const [pending, setPending] = useState(false)
+  /**
+   * Set synchronously, unlike `pending`, so a second tap that lands before the button has
+   * re-rendered as disabled still cannot send the same payment twice. The rules would refuse
+   * the second write anyway — this keeps the refusal from being shown as a failure.
+   */
+  const submitting = useRef(false)
 
   // Live change preview, meaningful only once the entry parses to a sufficient amount.
   const parsedTender = tenderText.trim() === '' ? null : parsePriceInput(tenderText)
   const preview = method === 'cash' && parsedTender?.ok ? changeDue(total, parsedTender.sen) : null
 
   function reset(nextOpen: boolean) {
-    setOpen(nextOpen)
+    setOwnOpen(nextOpen)
     if (!nextOpen) {
       setMethod('cash')
       setTenderText('')
@@ -61,7 +80,19 @@ export function RecordPaymentDialog({
     }
   }
 
+  /**
+   * Closing by Cancel, Escape or the overlay. Refused while a payment is being written: the
+   * write may still land, and closing then would let the counter believe it had not.
+   */
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen && submitting.current) return
+    reset(nextOpen)
+    if (!nextOpen) onDismiss?.()
+  }
+
   async function submit(chosen: PaymentMethod, cashTendered: number | null) {
+    if (submitting.current) return
+    submitting.current = true
     setError(null)
     setPending(true)
     try {
@@ -70,6 +101,7 @@ export function RecordPaymentDialog({
     } catch (caught) {
       setError(isMessageError(caught) ? caught.detail : message('payment.failed'))
     } finally {
+      submitting.current = false
       setPending(false)
     }
   }
@@ -99,13 +131,15 @@ export function RecordPaymentDialog({
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={reset}>
-      <AlertDialogTrigger asChild>
-        <Button size="lg" className="h-touch text-base" data-testid="record-payment">
-          <Wallet aria-hidden="true" />
-          {t('payment.record')}
-        </Button>
-      </AlertDialogTrigger>
+    <AlertDialog open={open} onOpenChange={handleOpenChange}>
+      {controlledOpen === undefined && (
+        <AlertDialogTrigger asChild>
+          <Button size="lg" className="h-touch text-base" data-testid="record-payment">
+            <Wallet aria-hidden="true" />
+            {t('payment.record')}
+          </Button>
+        </AlertDialogTrigger>
+      )}
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{t('payment.titleForOrder', { number: orderNumber })}</AlertDialogTitle>

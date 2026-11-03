@@ -138,4 +138,78 @@ describe('RecordPaymentDialog: when the write fails', () => {
 
     expect((screen.getByLabelText(/Cash received/) as HTMLInputElement).value).toBe('')
   })
+
+  it('sends a payment once, however often confirm is pressed while it is written', async () => {
+    let finish!: () => void
+    const onConfirm = vi.fn<(method: string, cash: number | null) => Promise<void>>(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    )
+    const { user } = setup(onConfirm)
+    await open(user)
+    await user.click(screen.getByTestId('payment-ewallet'))
+    await user.dblClick(screen.getByTestId('confirm-payment'))
+    // Cancel is refused too while the write is out: closing now would hide a payment that
+    // may yet land.
+    await user.keyboard('{Escape}')
+
+    expect(onConfirm).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('confirm-payment')).not.toBeNull()
+
+    finish()
+    await waitFor(() => expect(screen.queryByTestId('confirm-payment')).toBeNull())
+  })
+})
+
+describe('RecordPaymentDialog: opened by the caller', () => {
+  function setupOpened(
+    onConfirm = vi.fn<(method: string, cash: number | null) => Promise<void>>(async () => {}),
+  ) {
+    const onDismiss = vi.fn()
+    const rendered = renderComponent(
+      <RecordPaymentDialog
+        open
+        orderNumber={7}
+        total={TOTAL}
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+      />,
+    )
+    return { ...rendered, onConfirm, onDismiss }
+  }
+
+  it('is already open, with no button of its own', () => {
+    setupOpened()
+    expect(screen.getByText('Record payment for order #7')).not.toBeNull()
+    expect(screen.queryByTestId('record-payment')).toBeNull()
+  })
+
+  it('reports Cancel and Escape as a dismissal', async () => {
+    const { user, onDismiss } = setupOpened()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onDismiss).toHaveBeenCalledOnce()
+
+    await user.keyboard('{Escape}')
+    expect(onDismiss).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not report a successful payment as a dismissal', async () => {
+    const { user, onConfirm, onDismiss } = setupOpened()
+    await user.click(screen.getByTestId('payment-ewallet'))
+    await user.click(screen.getByTestId('confirm-payment'))
+
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith('ewallet', null))
+    expect(onDismiss).not.toHaveBeenCalled()
+  })
+
+  it('keeps the cash arithmetic exactly as on an order’s page', async () => {
+    const { user, onConfirm } = setupOpened()
+    await user.type(screen.getByLabelText(/Cash received/), '50')
+    expect(screen.getByTestId('payment-change').textContent).toBe('RM 18.10')
+
+    await user.clear(screen.getByLabelText(/Cash received/))
+    await user.type(screen.getByLabelText(/Cash received/), '20')
+    await user.click(screen.getByTestId('confirm-payment'))
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(screen.getByText('The amount tendered is less than the total.')).not.toBeNull()
+  })
 })

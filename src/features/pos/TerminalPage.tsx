@@ -32,34 +32,42 @@ import {
   validateCart,
   type Cart,
 } from '@/features/pos/cart'
+import { PaymentDecision, type PlacedOrder, type Settlement } from '@/features/pos/PaymentDecision'
 import { createOrder } from '@/features/pos/pos-api'
+import { PAYMENT_LABEL_KEYS } from '@/features/pos/types'
 import { formatMoney } from '@/lib/money'
 
-interface PlacedOrder {
-  number: number
-  total: number
-  service: Message
-}
-
 /**
- * What was just written, shown on the screen that asks who is making the next order.
+ * What was just written, and how it was settled, shown on the screen that asks who is making
+ * the next order.
  *
  * It reports the order the counter has finished with, at the moment the counter is starting
  * the next one — which is where the person standing there is actually looking.
  */
-function OrderPlacedAlert({ order }: { order: PlacedOrder }) {
+function OrderPlacedAlert({ order, settlement }: { order: PlacedOrder; settlement: Settlement }) {
   const { t } = useTranslation()
+  const figures = {
+    number: order.number,
+    total: formatMoney(order.total),
+    service: t(order.service),
+  }
+
   return (
-    <Alert className="mx-auto max-w-2xl" data-testid="order-confirmation">
+    <Alert
+      className="mx-auto max-w-2xl"
+      data-testid="order-confirmation"
+      data-settlement={settlement.kind}
+    >
       <CheckCircle2 aria-hidden="true" />
       {/* Echoes what was actually written, so the operator confirms the service details
           rather than assuming them. */}
       <AlertDescription data-testid="confirmation-service">
-        {t('terminal.placedBanner', {
-          number: order.number,
-          total: formatMoney(order.total),
-          service: t(order.service),
-        })}
+        {settlement.kind === 'paid'
+          ? t('terminal.paidBanner', {
+              ...figures,
+              method: t(PAYMENT_LABEL_KEYS[settlement.method]),
+            })
+          : t('terminal.placedBanner', figures)}
       </AlertDescription>
     </Alert>
   )
@@ -101,7 +109,12 @@ export function TerminalPage() {
   const [operatorChosen, setOperatorChosen] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<Message | null>(null)
-  const [lastOrder, setLastOrder] = useState<PlacedOrder | null>(null)
+  /** The order just written, while the counter decides whether it is paid now or later. */
+  const [awaitingPayment, setAwaitingPayment] = useState<PlacedOrder | null>(null)
+  const [lastOrder, setLastOrder] = useState<{
+    order: PlacedOrder
+    settlement: Settlement
+  } | null>(null)
   /** The cart column, which the phone summary bar's "Review order" brings into view. */
   const cartRef = useRef<HTMLElement>(null)
 
@@ -165,19 +178,21 @@ export function TerminalPage() {
   }
 
   /**
-   * Places the order **unpaid**. The customer is not asked to pay here — they pay when they
-   * collect, and whoever is on the till records it from the order's page then.
+   * Places the order **unpaid**, exactly as before — and then asks whether it is paid now or
+   * later. Paying is still its own write, made after the order exists; see PaymentDecision.
    */
   async function placeOrder() {
     if (!profile || !operator || !placement.ok) return
     setPending(true)
     setError(null)
+    const user = { uid: profile.uid, displayName: profile.displayName }
+    const staff = { id: operator.id, name: operator.name }
     try {
       const created = await createOrder({
         cart,
         placement: { orderType, tableNumber },
-        user: { uid: profile.uid, displayName: profile.displayName },
-        staff: { id: operator.id, name: operator.name },
+        user,
+        staff,
       })
       const service = orderTypeSummaryOf({
         orderType: placement.orderType,
@@ -190,10 +205,13 @@ export function TerminalPage() {
       // invisible because the field looks the same either way.
       setOrderType('dine_in')
       setTableNumber('')
-      // And back to asking who is making the next one. The confirmation below travels with
-      // it, so the order just placed is still reported on the screen that asks.
+      // And back to asking who is making the next one — reached once the payment question
+      // below is answered. Resetting it now rather than then means no path out of that
+      // question can skip the next order's operator prompt.
       setOperatorChosen(false)
-      setLastOrder({ number: created.number, total, service })
+      // The payment question, for THIS order: its id, number, total and operator are held
+      // here because the cart they came from has just been cleared.
+      setAwaitingPayment({ id: created.id, number: created.number, total, service, user, staff })
     } catch (caught) {
       setError(isMessageError(caught) ? caught.detail : message('terminal.placeFailed'))
     } finally {
@@ -216,6 +234,24 @@ export function TerminalPage() {
     panel.focus({ preventScroll: true })
   }
 
+  // The order just placed is already saved; this only decides whether money is taken for it
+  // now. Whatever the answer, the next stop is the operator question below, with the outcome
+  // reported above it. Ahead of the loading check because it needs nothing from the menu or
+  // the roster, and must not be unmounted — open payment dialog and all — if either reloads.
+  if (awaitingPayment) {
+    return (
+      <PaymentDecision
+        // Keyed by the order, so nothing from one order's decision can survive into the next.
+        key={awaitingPayment.id}
+        order={awaitingPayment}
+        onSettled={(settlement) => {
+          setLastOrder({ order: awaitingPayment, settlement })
+          setAwaitingPayment(null)
+        }}
+      />
+    )
+  }
+
   if (categoriesLoading || itemsLoading || staffLoading) {
     return <Skeleton className="h-[70vh] w-full" />
   }
@@ -226,7 +262,9 @@ export function TerminalPage() {
   if (!operator || !operatorChosen) {
     return (
       <div className="space-y-4">
-        {lastOrder && <OrderPlacedAlert order={lastOrder} />}
+        {lastOrder && (
+          <OrderPlacedAlert order={lastOrder.order} settlement={lastOrder.settlement} />
+        )}
         <StaffPicker
           heading="terminal.whoIsMaking"
           blurb="terminal.whoIsMakingBlurb"
@@ -424,8 +462,8 @@ export function TerminalPage() {
           }}
         />
 
-        {/* Placing the order is the only action here. Payment is a separate step, taken on
-            the order's own page after the customer has collected and paid. */}
+        {/* Placing the order is the only action here. Payment is a separate step: offered
+            straight after the order is saved, or taken later on the order's own page. */}
         {/*
          * Sticky below `md`, so the total and the one action are reachable without scrolling
          * to the end of a long cart — and offset by the mobile nav's own height so the two

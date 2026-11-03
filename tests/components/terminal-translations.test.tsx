@@ -92,6 +92,13 @@ vi.mock('@/features/pos/pos-api', () => ({
   createOrder: vi.fn(),
 }))
 
+// Placing an order now asks whether it is paid now or later, which looks the order up. These
+// tests are about what the order records, so that lookup is kept off the network.
+vi.mock('@/features/pos/payment-api', () => ({ recordPayment: vi.fn() }))
+vi.mock('@/features/pos/useOrderDetail', () => ({
+  useOrderDetail: () => ({ view: null, loading: false, error: null }),
+}))
+
 import { TerminalPage } from '@/features/pos/TerminalPage'
 
 const createOrderMock = vi.mocked(createOrder)
