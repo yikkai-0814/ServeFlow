@@ -180,7 +180,11 @@ service cloud.firestore {
         && d.updatedAt is timestamp
         && d.name is string && d.name.size() > 0 && d.name.size() <= 80
         && d.categoryId is string && d.categoryId.size() > 0
-        && d.price is int && d.price >= 0
+        // More than zero, as checkItemPricing in src/features/menu/item-pricing.ts requires, for
+        // any price being set. A price left as it was is let through: this rule also judges
+        // archiving and attaching a group, and neither should be refused over an old RM0 item.
+        && d.price is int
+        && (d.price > 0 || (resource != null && d.price == resource.data.price))
         && d.sortOrder is int
         && d.active is bool
         && (!('description' in d.keys())
@@ -193,6 +197,31 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // A price being set needs a cost beside it that it covers, as the form and
+    // checkItemPricing in src/features/menu/item-pricing.ts require. Cost lives in its own
+    // document, so a write that touched only the price could otherwise leave the two wrong
+    // without ever waking the cost rule below.
+    //
+    // `getAfter` because createMenuItem() and updateMenuItem() write the cost in the same batch,
+    // and it is the state they leave behind that counts. A price left as it was is let through:
+    // archiving and attaching a group land here too, and neither should be refused over an item
+    // from before these rules, with no cost or with one above its price.
+    //
+    // Document access calls, against the limits of 10 per write and 20 per batch. As written, no
+    // write on the item or its cost makes more than 5, and saving an item makes at most 18: an
+    // update with an opening journal entry. The modifier paths make 8 per option as written, and
+    // deleting an item 3 more per legacy group, so they rely on Firestore not charging repeats,
+    // which its documentation allows for ("some document access calls may be cached") without
+    // saying which. The emulator charged at most 4 on any menu write, however large the batch: a
+    // repeated call, and a document written in the same batch, cost nothing there. Measured with
+    // 491 writes; production is not verified here.
+    function priceCoversCostAfter(itemId) {
+      let d = request.resource.data;
+      let costPath = /databases/$(database)/documents/menuItemCosts/$(itemId);
+      return (resource != null && d.price == resource.data.price)
+        || (existsAfter(costPath) && getAfter(costPath).data.cost <= d.price);
+    }
+
     // Deleting an item must take its cost with it. deleteMenuItem() in menu-api.ts already
     // batches both, but until now nothing made that mandatory: a direct delete of the item
     // alone passed, stranding an admin-only menuItemCosts document that no screen would ever
@@ -201,7 +230,7 @@ service cloud.firestore {
     // calls a limit rules cannot enforce into one they can.
     match /menuItems/{itemId} {
       allow read: if isActive();
-      allow create, update: if isAdmin() && validMenuItem();
+      allow create, update: if isAdmin() && validMenuItem() && priceCoversCostAfter(itemId);
       allow delete: if isAdmin()
         && !existsAfter(/databases/$(database)/documents/menuItemCosts/$(itemId));
     }
@@ -325,10 +354,23 @@ service cloud.firestore {
       return existsAfter(/databases/$(database)/documents/menuItems/$(itemId));
     }
 
+    // A cost may not exceed the price it is set beside: the other half of priceCoversCostAfter
+    // above, for a write that touches only the cost. `getAfter` for the same reason as
+    // `existsAfter`: the price may be changing in the same batch. It reads the item only after
+    // menuItemExistsAfter has established there is one.
+    function costWithinPrice(itemId) {
+      return request.resource.data.cost
+        <= getAfter(/databases/$(database)/documents/menuItems/$(itemId)).data.price;
+    }
+
     match /menuItemCosts/{itemId} {
       allow read: if isAdmin();
-      allow create, update: if isAdmin() && validItemCost() && menuItemExistsAfter(itemId);
-      allow delete: if isAdmin();
+      allow create, update: if isAdmin() && validItemCost() && menuItemExistsAfter(itemId)
+        && costWithinPrice(itemId);
+      // Only with its item: a cost is compulsory, so an item left standing may not lose one.
+      // The mirror of the menuItems delete rule. deleteMenuItem() batches both, each sees the
+      // other gone, and the journal is untouched. A cost with no item left can still be removed.
+      allow delete: if isAdmin() && !menuItemExistsAfter(itemId);
     }
 
     // ---- Cost history (admin only, append-only) ----------------------------

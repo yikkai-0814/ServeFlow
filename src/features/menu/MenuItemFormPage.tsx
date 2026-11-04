@@ -17,6 +17,7 @@ import {
   validateItemNames,
   type LocalizedName,
 } from '@/features/menu/item-names'
+import { validateItemPricing } from '@/features/menu/item-pricing'
 import { withTranslations } from '@/features/menu/localized-names'
 import { NameTranslationsDialog, TranslationsButton } from '@/features/menu/NameTranslations'
 import { createMenuItem, updateMenuItem } from '@/features/menu/menu-api'
@@ -35,7 +36,7 @@ import {
 } from '@/features/menu/types'
 import { useCategories } from '@/features/menu/useCategories'
 import { useMenuItems } from '@/features/menu/useMenuItems'
-import { CURRENCY_PREFIX, parsePriceInput, toPriceInputValue } from '@/lib/money'
+import { CURRENCY_PREFIX, toPriceInputValue } from '@/lib/money'
 
 /**
  * Route component for both `/menu/new` and `/menu/:itemId/edit`.
@@ -153,18 +154,31 @@ function MenuItemForm({
 
   const [error, setError] = useState<Message | null>(null)
   /**
-   * Reported under the field rather than in the banner at the top of the form.
+   * Price and cost are judged on every render, because each depends on the other: lowering the
+   * price can put a cost in the wrong that nobody has touched. Whether that is SHOWN waits until
+   * somebody has left a filled-in field or tried to save, so that typing "12" over a price does
+   * not raise the alarm at the "1". From then on the messages follow the fields.
    *
-   * This is the one check somebody will trip repeatedly — it is a newly required field on a
-   * form they already know — so the message belongs where the cursor is going, and the
-   * cursor is sent there too. The other checks stay in the banner; they are typos.
+   * A blank field says nothing until a save is attempted: moving from the price to the cost is
+   * not a mistake, and telling somebody a field is required as they arrive at it is only noise.
+   *
+   * Reported under the fields rather than in the banner at the top of the form, because this is
+   * the check somebody will trip repeatedly, and the cursor is sent there too. The other checks
+   * stay in the banner; they are typos.
    */
-  const [costError, setCostError] = useState<Message | null>(null)
+  const [pricingChecked, setPricingChecked] = useState(false)
+  const [saveAttempted, setSaveAttempted] = useState(false)
+  const pricing = validateItemPricing(priceText, costText)
+  const showsError = (text: string) => saveAttempted || (pricingChecked && text.trim() !== '')
+  const priceError = !pricing.ok && showsError(priceText) ? pricing.price : null
+  const costError = !pricing.ok && showsError(costText) ? pricing.cost : null
+  const priceInput = useRef<HTMLInputElement>(null)
   const costInput = useRef<HTMLInputElement>(null)
   const [pending, setPending] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    setSaveAttempted(true)
 
     // English required, translations optional, every one of them trimmed and length-checked.
     // The rule lives in item-names.ts so the form and the till agree about what a name is.
@@ -183,31 +197,13 @@ function MenuItemForm({
     }
 
     // The one conversion that matters: text -> whole sen, with a real message on failure
-    // rather than a NaN sliding into the database.
-    const parsedPrice = parsePriceInput(priceText)
-    if (!parsedPrice.ok) {
-      setError(parsedPrice.error)
-      return
-    }
-
-    // Cost is mandatory. Blank, whitespace or unparseable all stop the submit here, with
-    // the message under the field and the cursor in it.
-    if (costText.trim() === '') {
+    // rather than a NaN sliding into the database. The messages are already under the fields,
+    // so all that is left is to stop and put the cursor in the first one.
+    if (!pricing.ok) {
       setError(null)
-      setCostError(message('validation.costRequired'))
-      costInput.current?.focus()
+      ;(pricing.price ? priceInput : costInput).current?.focus()
       return
     }
-    // `parsePriceInput` is the same parser the price field uses: it rejects a negative, a
-    // non-number and more than two decimals, and accepts 0 — which is a real answer.
-    const parsedCostResult = parsePriceInput(costText)
-    if (!parsedCostResult.ok) {
-      setError(null)
-      setCostError(parsedCostResult.error)
-      costInput.current?.focus()
-      return
-    }
-    const parsedCost = parsedCostResult.sen
 
     const parsedSort = Number(sortOrder)
     if (!Number.isInteger(parsedSort)) {
@@ -216,7 +212,6 @@ function MenuItemForm({
     }
 
     setError(null)
-    setCostError(null)
     setPending(true)
     try {
       const input = {
@@ -226,7 +221,7 @@ function MenuItemForm({
         names: storedTranslations(validatedNames.names),
         description: description.trim(),
         categoryId,
-        price: parsedPrice.sen,
+        price: pricing.price,
         sortOrder: parsedSort,
         active,
         // Editing never rewrites the attachments from here: the editor below owns them and
@@ -237,10 +232,10 @@ function MenuItemForm({
           : customisation.attachedIds,
       }
       if (isEditing && itemId) {
-        await updateMenuItem(itemId, input, { next: parsedCost, previous: existingCost })
+        await updateMenuItem(itemId, input, { next: pricing.cost, previous: existingCost })
       } else {
         // The item, the groups invented on this form and the attachments, in one batch.
-        await createMenuItem(input, parsedCost, customisation.drafts)
+        await createMenuItem(input, pricing.cost, customisation.drafts)
       }
       void navigate('/menu')
     } catch {
@@ -376,24 +371,43 @@ function MenuItemForm({
 
             <div className="grid gap-2">
               <Label htmlFor="price">
-                {t('menu.priceCurrency', { currency: CURRENCY_PREFIX })}
+                {t('menu.priceCurrency', { currency: CURRENCY_PREFIX })}{' '}
+                {/* Decoration for the eye only: `required` and `aria-invalid` on the input
+                    are what a screen reader is actually told. */}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
               </Label>
               <Input
+                ref={priceInput}
                 id="price"
                 inputMode="decimal"
+                required
+                aria-invalid={priceError !== null}
+                aria-describedby={priceError ? 'price-error' : undefined}
                 placeholder={t('menu.pricePlaceholder')}
                 className="h-touch text-base"
                 value={priceText}
                 onChange={(event) => setPriceText(event.target.value)}
+                onBlur={() => priceText.trim() !== '' && setPricingChecked(true)}
                 disabled={pending}
+                data-testid="price"
               />
+              {priceError && (
+                <p
+                  id="price-error"
+                  role="alert"
+                  className="text-xs text-destructive"
+                  data-testid="price-error"
+                >
+                  {t(priceError)}
+                </p>
+              )}
             </div>
 
             <div className="grid gap-2">
               <Label htmlFor="cost">
                 {t('menu.costCurrency', { currency: CURRENCY_PREFIX })}{' '}
-                {/* Decoration for the eye only: `required` and `aria-invalid` on the input
-                    are what a screen reader is actually told. */}
                 <span aria-hidden="true" className="text-destructive">
                   *
                 </span>
@@ -408,10 +422,8 @@ function MenuItemForm({
                 placeholder={t('menu.costPlaceholder')}
                 className="h-touch text-base"
                 value={costText}
-                onChange={(event) => {
-                  setCostText(event.target.value)
-                  setCostError(null)
-                }}
+                onChange={(event) => setCostText(event.target.value)}
+                onBlur={() => costText.trim() !== '' && setPricingChecked(true)}
                 disabled={pending}
                 data-testid="cost"
               />

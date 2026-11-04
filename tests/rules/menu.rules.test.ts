@@ -69,6 +69,19 @@ const ITEM = {
 const cost = (value: unknown) => ({ cost: value, updatedAt: new Date() })
 
 /** Seeds profiles and one category/item with rules bypassed, as an admin would have. */
+/** A new item as createMenuItem() writes one: the item and its cost in a single batch. */
+function createItem(
+  db: ReturnType<ReturnType<RulesTestEnvironment['authenticatedContext']>['firestore']>,
+  id: string,
+  item: Record<string, unknown>,
+  itemCost = 400,
+) {
+  const batch = writeBatch(db)
+  batch.set(doc(db, 'menuItems', id), item)
+  batch.set(doc(db, 'menuItemCosts', id), cost(itemCost))
+  return batch.commit()
+}
+
 async function seed({ adminActive = true, staffActive = true } = {}) {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore()
@@ -202,6 +215,36 @@ describe('menu rules: price and shape validation', () => {
     await assertFails(setDoc(doc(db, 'menuItems', 'bad'), { ...ITEM, price: '1250' }))
   })
 
+  it('rejects a price of zero on a new item, and setting one on an existing item', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertFails(setDoc(doc(db, 'menuItems', 'bad'), { ...ITEM, price: 0 }))
+    await assertFails(updateDoc(doc(db, 'menuItems', 'item-1'), { price: 0 }))
+  })
+
+  /**
+   * This rule judges every write to an item, not only a save from the form: archiving one and
+   * attaching a group land here too. So an item from before the rule, priced at RM0, has to go
+   * on being manageable until somebody chooses to give it a price.
+   */
+  it('leaves an old RM0 item manageable, but never lets a price return to zero', async () => {
+    await seed()
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'menuItems', 'free-item'), { ...ITEM, price: 0 })
+    })
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'free-item'), { active: false }))
+    await assertFails(updateDoc(doc(db, 'menuItems', 'free-item'), { price: -1 }))
+
+    const priced = writeBatch(db)
+    priced.update(doc(db, 'menuItems', 'free-item'), { price: 500 })
+    priced.set(doc(db, 'menuItemCosts', 'free-item'), cost(0))
+    await assertSucceeds(priced.commit())
+
+    await assertFails(updateDoc(doc(db, 'menuItems', 'free-item'), { price: 0 }))
+  })
+
   it('rejects an empty or over-long item name', async () => {
     await seed()
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
@@ -229,7 +272,7 @@ describe('menu rules: price and shape validation', () => {
       setDoc(doc(db, 'menuItems', 'bad'), { ...ITEM, description: 'x'.repeat(301) }),
     )
     const { description: _omitted, ...withoutDescription } = ITEM
-    await assertSucceeds(setDoc(doc(db, 'menuItems', 'ok'), withoutDescription))
+    await assertSucceeds(createItem(db, 'ok', withoutDescription))
   })
 
   it('accepts an item with translated names, and one with none at all', async () => {
@@ -237,18 +280,15 @@ describe('menu rules: price and shape validation', () => {
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
 
     await assertSucceeds(
-      setDoc(doc(db, 'menuItems', 'translated'), {
-        ...ITEM,
-        names: { ms: 'Nasi Goreng', zh: '炒饭' },
-      }),
+      createItem(db, 'translated', { ...ITEM, names: { ms: 'Nasi Goreng', zh: '炒饭' } }),
     )
     await assertSucceeds(
-      setDoc(doc(db, 'menuItems', 'one-translation'), { ...ITEM, names: { ms: 'Nasi Goreng' } }),
+      createItem(db, 'one-translation', { ...ITEM, names: { ms: 'Nasi Goreng' } }),
     )
     // An item whose admin has cleared both, and every item written before translations
     // existed: `names` absent or empty is the ordinary case, not a malformed document.
-    await assertSucceeds(setDoc(doc(db, 'menuItems', 'none'), { ...ITEM, names: {} }))
-    await assertSucceeds(setDoc(doc(db, 'menuItems', 'legacy'), ITEM))
+    await assertSucceeds(createItem(db, 'none', { ...ITEM, names: {} }))
+    await assertSucceeds(createItem(db, 'legacy', ITEM))
   })
 
   it('lets an admin add translations to an item that had none', async () => {
@@ -333,14 +373,13 @@ describe('menu rules: cost is admin-only', () => {
     await assertFails(deleteDoc(doc(db, 'menuItemCosts', 'item-1')))
   })
 
-  it('lets an admin read, write and delete costs', async () => {
+  it('lets an admin read and write costs', async () => {
     await seed()
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
     const snapshot = await assertSucceeds(getDoc(doc(db, 'menuItemCosts', 'item-1')))
     expect(snapshot.get('cost')).toBe(400)
     await assertSucceeds(setDoc(doc(db, 'menuItemCosts', 'item-2'), cost(250)))
     await assertSucceeds(updateDoc(doc(db, 'menuItemCosts', 'item-1'), { cost: 450 }))
-    await assertSucceeds(deleteDoc(doc(db, 'menuItemCosts', 'item-1')))
   })
 
   it('denies a deactivated admin', async () => {
@@ -358,6 +397,228 @@ describe('menu rules: cost is admin-only', () => {
     await assertFails(setDoc(doc(db, 'menuItemCosts', 'item-2'), cost(4.5)))
     await assertFails(setDoc(doc(db, 'menuItemCosts', 'item-2'), cost(-1)))
     await assertFails(setDoc(doc(db, 'menuItemCosts', 'item-2'), cost('400')))
+  })
+})
+
+describe('menu rules: a cost cannot exceed the price beside it', () => {
+  it('allows a cost of zero, below the price or equal to it', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertSucceeds(setDoc(doc(db, 'menuItemCosts', 'item-2'), cost(0)))
+    await assertSucceeds(setDoc(doc(db, 'menuItemCosts', 'item-2'), cost(1249)))
+    await assertSucceeds(setDoc(doc(db, 'menuItemCosts', 'item-2'), cost(1250)))
+  })
+
+  it('refuses a cost above the price', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertFails(setDoc(doc(db, 'menuItemCosts', 'item-2'), cost(1251)))
+  })
+
+  it('judges the price as the batch leaves it, in both directions', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+
+    // What updateMenuItem sends: the item and its cost together.
+    const lowered = writeBatch(db)
+    lowered.update(doc(db, 'menuItems', 'item-1'), { price: 300 })
+    lowered.set(doc(db, 'menuItemCosts', 'item-1'), cost(400))
+    await assertFails(lowered.commit())
+
+    const raised = writeBatch(db)
+    raised.update(doc(db, 'menuItems', 'item-1'), { price: 2000 })
+    raised.set(doc(db, 'menuItemCosts', 'item-1'), cost(1800))
+    await assertSucceeds(raised.commit())
+  })
+
+  it('does not reach into the journal: history stays as it was recorded', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertSucceeds(
+      setDoc(doc(db, 'menuItemCostHistory', 'old-entry'), {
+        itemId: 'item-1',
+        cost: 9999,
+        effectiveFrom: new Date(),
+        recordedBy: ADMIN_UID,
+      }),
+    )
+  })
+})
+
+/**
+ * The gap the cost rule alone leaves: a write that touches only the item never wakes it.
+ * Item-1 is priced at 1250 with a cost of 400.
+ */
+describe('menu rules: a write to the price alone cannot strand the cost', () => {
+  it('refuses a price lowered beneath the cost', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertFails(updateDoc(doc(db, 'menuItems', 'item-1'), { price: 399 }))
+  })
+
+  it('allows a price lowered to the cost exactly, or raised', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'item-1'), { price: 400 }))
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'item-1'), { price: 2000 }))
+  })
+
+  it('refuses it through a whole-document write as well', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertFails(setDoc(doc(db, 'menuItems', 'item-1'), { ...ITEM, price: 399 }))
+  })
+
+  it('still keeps a price-only write away from staff, whatever the cost', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(STAFF_UID).firestore()
+    await assertFails(updateDoc(doc(db, 'menuItems', 'item-1'), { price: 2000 }))
+  })
+
+  it('refuses a new item with no cost, or one its price does not cover', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertFails(setDoc(doc(db, 'menuItems', 'no-cost'), ITEM))
+    await assertFails(createItem(db, 'too-dear', ITEM, 1251))
+  })
+
+  it('accepts a new item written with its cost, including a cost of zero', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertSucceeds(createItem(db, 'costed', ITEM, 400))
+    await assertSucceeds(createItem(db, 'free-to-make', ITEM, 0))
+  })
+
+  it('refuses a price change on an item with no cost, unless one arrives with it', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertFails(updateDoc(doc(db, 'menuItems', 'item-2'), { price: 990 }))
+
+    const withCost = writeBatch(db)
+    withCost.update(doc(db, 'menuItems', 'item-2'), { price: 990 })
+    withCost.set(doc(db, 'menuItemCosts', 'item-2'), cost(0))
+    await assertSucceeds(withCost.commit())
+  })
+
+  /**
+   * Archiving and attaching a group are writes to the same document, and leave the price alone.
+   * An item from before these rules has to stay manageable until somebody chooses to fix it.
+   */
+  it('leaves an item with no cost manageable', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'item-2'), { active: false }))
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'item-2'), { modifierGroupIds: ['g1'] }))
+  })
+
+  it('leaves an item whose cost already exceeds its price manageable', async () => {
+    await seed()
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'menuItemCosts', 'item-1'), cost(9999))
+    })
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'item-1'), { active: false }))
+    // But a new price has to put it right, not merely move it.
+    await assertFails(updateDoc(doc(db, 'menuItems', 'item-1'), { price: 9998 }))
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'item-1'), { price: 9999 }))
+  })
+
+  it('still lets an item and its cost be deleted together', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    const removal = writeBatch(db)
+    removal.delete(doc(db, 'menuItems', 'item-1'))
+    removal.delete(doc(db, 'menuItemCosts', 'item-1'))
+    await assertSucceeds(removal.commit())
+  })
+})
+
+/** A cost is compulsory, so an item left standing may not lose one. */
+describe('menu rules: a cost document cannot be removed on its own', () => {
+  const entry = {
+    itemId: 'item-1',
+    cost: 400,
+    effectiveFrom: new Date(),
+    recordedBy: ADMIN_UID,
+  }
+
+  it('refuses an admin deleting the cost of an item that stays', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertFails(deleteDoc(doc(db, 'menuItemCosts', 'item-1')))
+
+    const remaining = await assertSucceeds(getDoc(doc(db, 'menuItemCosts', 'item-1')))
+    expect(remaining.get('cost')).toBe(400)
+  })
+
+  it('refuses it inside a batch too, if the item is not going with it', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'menuItems', 'item-1'), { active: false })
+    batch.delete(doc(db, 'menuItemCosts', 'item-1'))
+    await assertFails(batch.commit())
+  })
+
+  it('still refuses deleting the item while its cost stays', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertFails(deleteDoc(doc(db, 'menuItems', 'item-1')))
+  })
+
+  it('still lets the item and its cost go together', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    const removal = writeBatch(db)
+    removal.delete(doc(db, 'menuItems', 'item-1'))
+    removal.delete(doc(db, 'menuItemCosts', 'item-1'))
+    await assertSucceeds(removal.commit())
+  })
+
+  it('lets a stray cost whose item is already gone be cleared up', async () => {
+    await seed()
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'menuItemCosts', 'long-gone'), cost(100))
+    })
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertSucceeds(deleteDoc(doc(db, 'menuItemCosts', 'long-gone')))
+  })
+
+  it('leaves archiving and restoring an item as they were', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'item-1'), { active: false }))
+    await assertSucceeds(updateDoc(doc(db, 'menuItems', 'item-1'), { active: true }))
+  })
+
+  it('leaves an ordinary update as it was', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+    const update = writeBatch(db)
+    update.update(doc(db, 'menuItems', 'item-1'), { name: 'Renamed', price: 1300 })
+    update.set(doc(db, 'menuItemCosts', 'item-1'), cost(450))
+    await assertSucceeds(update.commit())
+  })
+
+  it('keeps the journal when the item goes, and it stays append-only', async () => {
+    await seed()
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'menuItemCostHistory', 'h1'), entry)
+    })
+    const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
+
+    await assertFails(updateDoc(doc(db, 'menuItemCostHistory', 'h1'), { cost: 1 }))
+    await assertFails(deleteDoc(doc(db, 'menuItemCostHistory', 'h1')))
+
+    const removal = writeBatch(db)
+    removal.delete(doc(db, 'menuItems', 'item-1'))
+    removal.delete(doc(db, 'menuItemCosts', 'item-1'))
+    await assertSucceeds(removal.commit())
+
+    const kept = await assertSucceeds(getDoc(doc(db, 'menuItemCostHistory', 'h1')))
+    expect(kept.get('cost')).toBe(400)
+    await assertFails(updateDoc(doc(db, 'menuItemCostHistory', 'h1'), { cost: 1 }))
+    await assertFails(deleteDoc(doc(db, 'menuItemCostHistory', 'h1')))
   })
 })
 

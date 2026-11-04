@@ -11,11 +11,21 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, setDoc } from 'firebase/firestore'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { createMenuItem, deleteMenuItem, updateMenuItem } from '@/features/menu/menu-api'
+import {
+  createMenuItem,
+  deleteMenuItem,
+  setMenuItemActive,
+  updateMenuItem,
+} from '@/features/menu/menu-api'
 import { getLocalizedMenuItemName } from '@/features/menu/item-names'
 import { parseMenuItem } from '@/features/menu/types'
 import type { Cart } from '@/features/pos/cart'
-import { lineKeyOf, parseModifierGroup, selectionOf } from '@/features/menu/modifiers'
+import {
+  lineKeyOf,
+  MAX_OPTIONS_PER_GROUP,
+  parseModifierGroup,
+  selectionOf,
+} from '@/features/menu/modifiers'
 import { getLocalizedModifierOptionName } from '@/features/menu/option-names'
 import {
   createModifierGroupForItem,
@@ -1331,6 +1341,121 @@ describe('the menu write API keeps cost and its journal in step', () => {
     expect(cost.get('cost')).toBe(420)
   })
 
+  const journalFor = async (itemId: string) =>
+    (await getDocs(collection(db, 'menuItemCostHistory'))).docs.filter(
+      (entry) => entry.get('itemId') === itemId,
+    )
+
+  /** An item from before cost was compulsory: on the menu, with no cost document at all. */
+  async function itemWithNoCost() {
+    await seed(async (context) => {
+      await setDoc(doc(context.firestore(), 'menuItems', 'old-item'), {
+        ...ITEM,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    })
+    return 'old-item'
+  }
+
+  it('records a cost of zero as a real cost, in the document and the journal', async () => {
+    await signInAs(admin)
+    const itemId = await createMenuItem(ITEM, 0)
+
+    expect((await getDoc(doc(db, 'menuItemCosts', itemId))).get('cost')).toBe(0)
+    expect((await journalFor(itemId)).map((entry) => entry.get('cost'))).toEqual([0])
+  })
+
+  it('refuses to create an item with a missing cost, writing nothing at all', async () => {
+    await signInAs(admin)
+    const before = (await getDocs(collection(db, 'menuItems'))).size
+
+    for (const missing of [null, undefined]) {
+      await expect(createMenuItem(ITEM, missing as unknown as number)).rejects.toThrow()
+    }
+
+    expect((await getDocs(collection(db, 'menuItems'))).size).toBe(before)
+  })
+
+  it('writes nothing for a cost above the price, or a price that is not above zero', async () => {
+    await signInAs(admin)
+    const before = (await getDocs(collection(db, 'menuItems'))).size
+
+    await expect(createMenuItem(ITEM, 991)).rejects.toThrow()
+    await expect(createMenuItem({ ...ITEM, price: 0 }, 0)).rejects.toThrow()
+    await expect(createMenuItem({ ...ITEM, price: -1 }, 0)).rejects.toThrow()
+
+    expect((await getDocs(collection(db, 'menuItems'))).size).toBe(before)
+  })
+
+  it('accepts a cost equal to the price', async () => {
+    await signInAs(admin)
+    const itemId = await createMenuItem(ITEM, 990)
+    expect((await getDoc(doc(db, 'menuItemCosts', itemId))).get('cost')).toBe(990)
+  })
+
+  it('refuses a price lowered beneath the cost, changing neither', async () => {
+    await signInAs(admin)
+    const itemId = await createMenuItem(ITEM, 380)
+
+    await expect(
+      updateMenuItem(itemId, { ...ITEM, price: 379 }, { next: 380, previous: 380 }),
+    ).rejects.toThrow()
+
+    expect((await getDoc(doc(db, 'menuItems', itemId))).get('price')).toBe(990)
+    expect((await getDoc(doc(db, 'menuItemCosts', itemId))).get('cost')).toBe(380)
+  })
+
+  it('will not save an item with no cost until it is given one, inventing nothing', async () => {
+    const itemId = await itemWithNoCost()
+    await signInAs(admin)
+
+    await expect(
+      updateMenuItem(
+        itemId,
+        { ...ITEM, name: 'Renamed' },
+        { next: null as unknown as number, previous: null },
+      ),
+    ).rejects.toThrow()
+
+    expect((await getDoc(doc(db, 'menuItems', itemId))).get('name')).toBe('Cortado')
+    expect((await getDoc(doc(db, 'menuItemCosts', itemId))).exists()).toBe(false)
+    expect(await journalFor(itemId)).toHaveLength(0)
+
+    await updateMenuItem(itemId, { ...ITEM, name: 'Renamed' }, { next: 380, previous: null })
+
+    expect((await getDoc(doc(db, 'menuItems', itemId))).get('name')).toBe('Renamed')
+    expect((await getDoc(doc(db, 'menuItemCosts', itemId))).get('cost')).toBe(380)
+    expect((await journalFor(itemId)).map((entry) => entry.get('cost'))).toEqual([380])
+  })
+
+  it('journals a first cost of zero on such an item as a real entry', async () => {
+    const itemId = await itemWithNoCost()
+    await signInAs(admin)
+    await updateMenuItem(itemId, ITEM, { next: 0, previous: null })
+
+    expect((await getDoc(doc(db, 'menuItemCosts', itemId))).get('cost')).toBe(0)
+    expect((await journalFor(itemId)).map((entry) => entry.get('cost'))).toEqual([0])
+  })
+
+  it('leaves every journal entry as it was, and only ever appends', async () => {
+    await signInAs(admin)
+    const itemId = await createMenuItem(ITEM, 380)
+    await updateMenuItem(itemId, ITEM, { next: 420, previous: 380 })
+    const snapshot = async () =>
+      new Map((await journalFor(itemId)).map((entry) => [entry.id, entry.data()]))
+    const before = await snapshot()
+
+    // A save that changes no cost records nothing, and one that does adds exactly one entry.
+    await updateMenuItem(itemId, { ...ITEM, price: 1050 }, { next: 420, previous: 420 })
+    expect((await snapshot()).size).toBe(before.size)
+
+    await updateMenuItem(itemId, { ...ITEM, price: 1050 }, { next: 500, previous: 420 })
+    const after = await snapshot()
+    expect(after.size).toBe(before.size + 1)
+    for (const [id, entry] of before) expect(after.get(id)).toEqual(entry)
+  })
+
   /**
    * Cost is mandatory, so clearing one is no longer something this API can express.
    *
@@ -1371,6 +1496,30 @@ describe('the menu write API keeps cost and its journal in step', () => {
     // The rules now refuse the item's deletion unless its cost goes too, so this passing
     // proves deleteMenuItem still batches both.
     expect((await getDoc(doc(db, 'menuItemCosts', itemId))).exists()).toBe(false)
+  })
+
+  it('keeps the journal when an item is deleted, so past sales still resolve', async () => {
+    await signInAs(admin)
+    const itemId = await createMenuItem(ITEM, 380)
+    await updateMenuItem(itemId, ITEM, { next: 420, previous: 380 })
+    const before = (await journalFor(itemId)).map((entry) => entry.data())
+
+    await deleteMenuItem(itemId)
+
+    expect((await journalFor(itemId)).map((entry) => entry.data())).toEqual(before)
+  })
+
+  it('refuses removing a cost from an item that stays, and archiving still works', async () => {
+    await signInAs(admin)
+    const itemId = await createMenuItem(ITEM, 380)
+
+    await expect(deleteDoc(doc(db, 'menuItemCosts', itemId))).rejects.toThrow()
+    expect((await getDoc(doc(db, 'menuItemCosts', itemId))).get('cost')).toBe(380)
+
+    await setMenuItemActive(itemId, false)
+    expect((await getDoc(doc(db, 'menuItems', itemId))).get('active')).toBe(false)
+    await setMenuItemActive(itemId, true)
+    expect((await getDoc(doc(db, 'menuItems', itemId))).get('active')).toBe(true)
   })
 
   it('refuses a staff account any of it', async () => {
@@ -1783,6 +1932,89 @@ describe('menu item customisation, through the app’s own writes', () => {
     const owned = all.docs.filter((entry) => entry.data().itemId === itemId)
     expect(owned).toHaveLength(1)
     expect((await getDoc(doc(db, 'menuItems', itemId))).data()?.modifierGroupIds).toEqual([])
+  })
+
+  /**
+   * The largest writes the app makes, through the real API and the real rules.
+   *
+   * The form puts no limit on how many new groups one item may bring, so eight full groups stands
+   * in for "more than anybody would": 491 writes in one batch. What matters is that the rules'
+   * document reads do not grow with it: see the access-call figures in the rules' own comments.
+   */
+  const fullGroup = (index: number, costOffset = 0) => ({
+    ...VEG,
+    shared: false,
+    name: `Group ${index}`,
+    options: Array.from({ length: MAX_OPTIONS_PER_GROUP }, (_, option) => ({
+      id: `option-${option}`,
+      name: `Option ${option}`,
+      names: {},
+      priceAdjustment: 0,
+      cost: option + costOffset,
+      active: true,
+    })),
+  })
+
+  it('creates an item with eight full groups in one batch', async () => {
+    await signInAs(admin)
+    const itemId = await createMenuItem(
+      {
+        name: 'Set Lunch',
+        names: {},
+        description: '',
+        categoryId: 'cat-mains',
+        price: 2500,
+        sortOrder: 4,
+        active: true,
+        modifierGroupIds: [],
+      },
+      1000,
+      Array.from({ length: 8 }, (_, index) => fullGroup(index)),
+    )
+
+    const groups = await getDocs(collection(db, 'modifierGroups'))
+    const owned = groups.docs.filter((entry) => entry.data().itemId === itemId)
+    expect(owned).toHaveLength(8)
+    const ownedIds = new Set(owned.map((entry) => entry.id))
+    const costs = await getDocs(collection(db, 'modifierOptionCosts'))
+    expect(costs.docs.filter((entry) => ownedIds.has(entry.get('groupId')))).toHaveLength(240)
+    expect((await getDoc(doc(db, 'menuItemCosts', itemId))).get('cost')).toBe(1000)
+  })
+
+  it('saves a full group with every option’s cost changed', async () => {
+    await signInAs(admin)
+    const groupId = await createModifierGroupForItem(CHICKEN, fullGroup(0))
+    await updateModifierGroup(groupId, fullGroup(0, 100))
+
+    const journal = await getDocs(collection(db, 'modifierOptionCostHistory'))
+    expect(journal.docs.filter((entry) => entry.get('groupId') === groupId)).toHaveLength(60)
+  })
+
+  it('leaves an option free to add nothing, and to cost more than it adds', async () => {
+    await signInAs(admin)
+    const free = { ...VEG.options[0]!, id: 'veg-free', priceAdjustment: 0, cost: 0 }
+    const dearer = { ...VEG.options[1]!, id: 'veg-dear', priceAdjustment: 0, cost: 50 }
+    const itemId = await createMenuItem(
+      {
+        name: 'Nasi Lemak',
+        names: {},
+        description: '',
+        categoryId: 'cat-mains',
+        price: 700,
+        sortOrder: 3,
+        active: true,
+        modifierGroupIds: [],
+      },
+      300,
+      [{ ...VEG, shared: false, options: [free, dearer] }],
+    )
+
+    const groups = await getDocs(collection(db, 'modifierGroups'))
+    const groupId = groups.docs.find((entry) => entry.data().itemId === itemId)!.id
+    const costOf = async (optionId: string) =>
+      (await getDoc(doc(db, 'modifierOptionCosts', modifierCostKey(groupId, optionId)))).get('cost')
+    expect(await costOf('veg-free')).toBe(0)
+    expect(await costOf('veg-dear')).toBe(50)
   })
 
   it('takes an item-specific group with the item, and never a shared one', async () => {

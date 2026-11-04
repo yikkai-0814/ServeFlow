@@ -20,6 +20,7 @@ import {
 
 import { openingEntryFrom, type OpeningEntry } from '@/features/menu/cost-history'
 import type { ItemNameTranslations } from '@/features/menu/item-names'
+import { checkItemPricing } from '@/features/menu/item-pricing'
 import type { OptionNameTranslations } from '@/features/menu/option-names'
 import { modifierCostKey, parseModifierOptionCost } from '@/features/menu/modifier-cost'
 import type { SelectionMode } from '@/features/menu/modifiers'
@@ -103,6 +104,17 @@ function requireCost(cost: number): number {
     throw new MessageError(message('validation.costRequired'))
   }
   return cost
+}
+
+/**
+ * The form's price rules, on the figures about to be written — a backstop in the same way.
+ * Called from the item paths rather than `writeCost`, which also serves modifier options:
+ * an option's cost has no relation to what it adds to the bill, and adding nothing is normal.
+ */
+function requireItemPricing(price: number, cost: number): void {
+  const errors = checkItemPricing(price, cost)
+  const failure = errors.price ?? errors.cost
+  if (failure) throw new MessageError(failure)
 }
 
 /**
@@ -286,6 +298,8 @@ export async function createMenuItem(
   cost: number,
   newGroups: readonly ModifierGroupInput[] = [],
 ): Promise<string> {
+  requireItemPricing(input.price, cost)
+
   // The id is generated client-side so the item and its cost can share one, and both go in
   // a single batch.
   const itemReference = doc(collection(db, 'menuItems'))
@@ -332,6 +346,8 @@ export async function updateMenuItem(
   input: MenuItemInput,
   cost: CostUpdate,
 ): Promise<void> {
+  requireItemPricing(input.price, cost.next)
+
   // Read before the batch: a batch cannot read, and the journal needs to know whether this
   // item has any history yet.
   const opening = await resolveOpeningEntry(itemCostTarget(id), cost)

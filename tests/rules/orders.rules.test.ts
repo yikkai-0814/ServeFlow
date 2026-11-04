@@ -614,6 +614,7 @@ describe('cost history rules: an entry must point at a real item', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     })
+    batch.set(doc(db, 'menuItemCosts', 'i2'), { cost: 400, updatedAt: new Date() })
     batch.set(doc(collection(db, 'menuItemCostHistory')), entryFor('i2'))
     await assertSucceeds(batch.commit())
   })
