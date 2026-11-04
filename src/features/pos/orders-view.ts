@@ -166,6 +166,17 @@ export function matchesSearch(order: Order, term: string): boolean {
   return order.lines.some((line) => line.name.toLowerCase().includes(needle))
 }
 
+/**
+ * How many of these orders are still owed money — exactly the rows the Unpaid filter lists,
+ * so the count and the filter can never disagree. Pay later orders count until a payment is
+ * recorded; a voided sale is cancelled and owes nothing; an order that carried its payment
+ * inline before pay-later existed is paid. There are no partial payments to consider: a
+ * payment always settles the whole total (firestore.rules, `d.amount == order.total`).
+ */
+export function countUnpaidOrders(views: readonly OrderView[]): number {
+  return views.filter((view) => matchesFilter(view, 'unpaid')).length
+}
+
 /** Both narrowings, in the order a person thinks about them: the view, then the words. */
 export function filterOrders(
   views: readonly OrderView[],

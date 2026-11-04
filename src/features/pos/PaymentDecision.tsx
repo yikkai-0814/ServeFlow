@@ -118,11 +118,13 @@ export function PaymentDecision({
         </p>
       </div>
 
+      {/* `whitespace-normal`: "Bayar sekarang" is wider than half a 320-360px phone, and without
+          it the label ran out of its button. It wraps there and stays on one line elsewhere. */}
       <div className="grid grid-cols-2 gap-3">
         <Button
           type="button"
           size="lg"
-          className="h-touch-lg text-lg font-semibold"
+          className="h-touch-lg text-lg font-semibold whitespace-normal"
           data-testid="pay-now"
           disabled={paying}
           onClick={() => setPaying(true)}
@@ -134,7 +136,7 @@ export function PaymentDecision({
           type="button"
           size="lg"
           variant="outline"
-          className="h-touch-lg text-lg font-semibold"
+          className="h-touch-lg text-lg font-semibold whitespace-normal"
           data-testid="pay-later"
           disabled={paying}
           onClick={() => settle({ kind: 'unpaid' })}

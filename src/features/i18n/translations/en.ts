@@ -55,6 +55,8 @@ export const en = {
   'nav.reports': 'Reports',
   'nav.newOrder': 'New Order',
   'nav.orders': 'Orders',
+  'nav.unpaidOrdersOne': '1 unpaid order today',
+  'nav.unpaidOrdersOther': '{{count}} unpaid orders today',
   'nav.menu': 'Menu',
   'nav.staff': 'Staff',
   'nav.queue': 'Queue',

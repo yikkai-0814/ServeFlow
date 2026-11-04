@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildOrderView,
   buildOrderViews,
+  countUnpaidOrders,
   filterOrders,
   isOrderFilter,
   matchesFilter,
@@ -379,5 +380,79 @@ describe('filterOrders', () => {
   it('preserves the order it was given, newest first', () => {
     const newestFirst = [...views].reverse()
     expect(filterOrders(newestFirst, 'all', '').map((view) => view.order.number)).toEqual([3, 2, 1])
+  })
+})
+
+describe('countUnpaidOrders', () => {
+  const ids = ['pay-later-1', 'pay-later-2', 'paid', 'voided-unpaid', 'voided-paid', 'legacy-paid']
+  const orders = ids.map((id, index) =>
+    order({
+      id,
+      number: index + 1,
+      ...(id === 'legacy-paid'
+        ? { paymentMethod: 'cash', cashTendered: 3190, changeGiven: 0 }
+        : {}),
+    }),
+  )
+  const views = buildOrderViews(
+    orders,
+    sidecars({
+      payments: new Map([
+        ['paid', payment('paid')],
+        ['voided-paid', payment('voided-paid')],
+      ]),
+      voids: new Map([
+        ['voided-unpaid', voided('voided-unpaid')],
+        ['voided-paid', voided('voided-paid')],
+      ]),
+    }),
+  )
+
+  it('counts Pay later orders, and only orders still owed money', () => {
+    // pay-later-1 and pay-later-2 — not the paid one, the voided ones, or the legacy sale.
+    expect(countUnpaidOrders(views)).toBe(2)
+  })
+
+  it('always agrees with the Unpaid filter', () => {
+    expect(countUnpaidOrders(views)).toBe(filterOrders(views, 'unpaid', '').length)
+  })
+
+  it('drops an order once its payment is recorded, and once it is voided', () => {
+    const afterPayment = buildOrderViews(
+      orders,
+      sidecars({
+        payments: new Map([
+          ['paid', payment('paid')],
+          ['voided-paid', payment('voided-paid')],
+          ['pay-later-1', payment('pay-later-1')],
+        ]),
+        voids: new Map([
+          ['voided-unpaid', voided('voided-unpaid')],
+          ['voided-paid', voided('voided-paid')],
+        ]),
+      }),
+    )
+    expect(countUnpaidOrders(afterPayment)).toBe(1)
+
+    const afterVoid = buildOrderViews(
+      orders,
+      sidecars({
+        payments: new Map([
+          ['paid', payment('paid')],
+          ['voided-paid', payment('voided-paid')],
+          ['pay-later-1', payment('pay-later-1')],
+        ]),
+        voids: new Map([
+          ['voided-unpaid', voided('voided-unpaid')],
+          ['voided-paid', voided('voided-paid')],
+          ['pay-later-2', voided('pay-later-2')],
+        ]),
+      }),
+    )
+    expect(countUnpaidOrders(afterVoid)).toBe(0)
+  })
+
+  it('is zero for a day with no orders', () => {
+    expect(countUnpaidOrders([])).toBe(0)
   })
 })

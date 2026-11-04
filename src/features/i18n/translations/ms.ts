@@ -49,6 +49,8 @@ export const ms: Dictionary = {
   'nav.reports': 'Laporan',
   'nav.newOrder': 'Pesanan Baharu',
   'nav.orders': 'Pesanan',
+  'nav.unpaidOrdersOne': '1 pesanan belum dibayar hari ini',
+  'nav.unpaidOrdersOther': '{{count}} pesanan belum dibayar hari ini',
   'nav.menu': 'Menu',
   'nav.staff': 'Kakitangan',
   'nav.queue': 'Giliran',

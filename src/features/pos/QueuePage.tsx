@@ -347,9 +347,12 @@ function QueueCard({
       data-fulfillment={view.fulfillment}
     >
       <header className="flex flex-wrap items-baseline gap-2">
+        {/* The number stays the size it was, but its target does not: "#1" alone is 21x28px, too
+            small for a kitchen touchscreen. The pseudo-element takes the tap across the full
+            touch height and width without moving anything, and the card's padding has room. */}
         <Link
           to={`/orders/${order.id}`}
-          className="text-lg font-semibold tabular-nums hover:underline"
+          className="relative text-lg font-semibold tabular-nums hover:underline before:absolute before:top-1/2 before:left-1/2 before:h-touch before:w-full before:min-w-touch before:-translate-x-1/2 before:-translate-y-1/2"
           aria-label={t('orders.receiptFor', { number: order.number })}
         >
           #{order.number}

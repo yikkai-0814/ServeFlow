@@ -21,6 +21,12 @@ import { db } from '@/lib/firebase'
  * As in `use-live-query.ts`, the error message is held in a ref rather than depended on: a
  * `Message` is rebuilt on every render, and making the reconciliation below react to that
  * would reopen every chunk's listener on every render.
+ *
+ * **Failures are held per chunk too.** A single error let any healthy chunk's next snapshot
+ * clear a failure elsewhere, which then read as though every chunk were current while one had
+ * stopped updating. The SDK drops a listener for good when it errors, so a failed chunk is also
+ * forgotten as subscribed: the next reconciliation opens it a replacement, and its failure
+ * stands until that replacement has answered.
  */
 export interface SidecarState<T> {
   records: Map<string, T>
@@ -61,7 +67,7 @@ export function useSidecarDocs<T extends { orderId: string }>(
   )
 
   const [pages, setPages] = useState<Map<string, T[]>>(() => new Map())
-  const [error, setError] = useState<Message | null>(null)
+  const [failures, setFailures] = useState<ReadonlyMap<string, Message>>(() => new Map())
   const latestError = useRef(errorMessage)
   useEffect(() => {
     latestError.current = errorMessage
@@ -115,9 +121,19 @@ export function useSidecarDocs<T extends { orderId: string }>(
               next.set(key, rows)
               return next
             })
-            setError(null)
+            // Only this chunk's own answer speaks for this chunk.
+            setFailures((previous) => {
+              if (!previous.has(key)) return previous
+              const next = new Map(previous)
+              next.delete(key)
+              return next
+            })
           },
-          () => setError(latestError.current),
+          () => {
+            const failure = latestError.current
+            subscriptions.current.delete(key)
+            setFailures((previous) => new Map(previous).set(key, failure))
+          },
         ),
       )
     }
@@ -149,6 +165,16 @@ export function useSidecarDocs<T extends { orderId: string }>(
   // Loading until every chunk has reported once. No chunks means no orders to describe,
   // which is settled rather than pending.
   const loading = keys.some((key) => !pages.has(key))
+
+  // Read through the wanted keys, as `records` is: a chunk nobody is asking for any more has
+  // nothing left to report.
+  const error = useMemo(() => {
+    for (const key of keys) {
+      const failure = failures.get(key)
+      if (failure) return failure
+    }
+    return null
+  }, [failures, keys])
 
   return { records, loading, error }
 }

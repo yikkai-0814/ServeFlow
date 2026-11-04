@@ -148,8 +148,9 @@ export function ItemCustomisationDialog({
                       {/* The name this option has on a till set to this language, falling
                           back to its English name when it has no translation — never a gap.
                           This is also exactly the string `selectionOf` snapshots onto the
-                          order, so the receipt says what the counter said. */}
-                      <span className="min-w-0 truncate">
+                          order, so the receipt says what the counter said. It wraps rather than
+                          truncating: beside a price, "Extra chicken" read "Extra chic…". */}
+                      <span className="min-w-0 wrap-break-word">
                         {getLocalizedModifierOptionName(option, language)}
                       </span>
                       {option.priceAdjustment !== 0 && (
@@ -181,11 +182,13 @@ export function ItemCustomisationDialog({
           </p>
         )}
 
+        {/* `h-touch`, like the options above: this is the tap every customised item ends on. */}
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={onCancel} data-testid="customise-cancel">
+          <AlertDialogCancel className="h-touch" onClick={onCancel} data-testid="customise-cancel">
             {t('common.cancel')}
           </AlertDialogCancel>
           <AlertDialogAction
+            className="h-touch"
             disabled={!validation.ok}
             data-testid="customise-add"
             onClick={() => validation.ok && onAdd(chosen)}

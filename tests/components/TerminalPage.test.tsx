@@ -343,6 +343,18 @@ describe('New Order: pay now or pay later', () => {
     expect(detailOrderId).toBe('order-1')
   })
 
+  it('lets a long Pay now or Pay later label wrap inside its button', async () => {
+    // "Bayar sekarang" is wider than half a 320-360px phone: unwrapped, it ran out of the button.
+    const { user } = renderComponent(<TerminalPage />)
+    await placeOnlyAs(user, 'Alice')
+
+    for (const id of ['pay-now', 'pay-later']) {
+      const classes = screen.getByTestId(id).className.split(/\s+/)
+      expect(classes).toContain('whitespace-normal')
+      expect(classes).not.toContain('whitespace-nowrap')
+    }
+  })
+
   it('opens the existing payment dialog for that order on Pay now', async () => {
     const { user } = renderComponent(<TerminalPage />)
     await placeOnlyAs(user, 'Alice')

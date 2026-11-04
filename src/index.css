@@ -68,6 +68,13 @@
      red: a completed order should read as quiet, not as an alert. */
   --success: oklch(0.52 0.11 155);
   --success-foreground: oklch(0.99 0.01 155);
+  /* A count that wants attention — the unpaid-orders badge on the Orders nav item. A solid
+     fill carrying a white number, which --destructive cannot be in both themes: dark mode
+     lifts it so red TEXT reads on a dark card, and white on that lifted red is only 3.05:1.
+     A brick red between the destructive hue (27) and the brand terracotta (45), muted well
+     below the error red so it belongs to the palette: 5.09:1 with the white number. */
+  --notification: oklch(0.55 0.16 32);
+  --notification-foreground: oklch(0.99 0 0);
 
   --sidebar: oklch(0.995 0.002 75);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -129,6 +136,10 @@
      dark card, and a tinted badge needs the text to carry, not the background. */
   --success: oklch(0.76 0.13 158);
   --success-foreground: oklch(0.2 0.03 158);
+  /* Unchanged from light, on purpose: the fill carries a white number, so it stays deep
+     (5.09:1), and it still stands 3.56:1 off the dark sidebar. */
+  --notification: oklch(0.55 0.16 32);
+  --notification-foreground: oklch(0.99 0 0);
 
   /* The sidebar sits beside the page rather than on it, so it is a step darker than a card
      — the same relationship the light theme draws, in the other direction. */
@@ -169,6 +180,8 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
+  --color-notification: var(--notification);
+  --color-notification-foreground: var(--notification-foreground);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-border: var(--sidebar-border);

@@ -413,13 +413,18 @@ export function OrderDetailPage() {
                 data-testid="receipt-line"
                 data-item-name={line.name}
               >
-                <div className="flex items-baseline gap-3">
-                  <span className="w-8 tabular-nums text-muted-foreground">{line.quantity}×</span>
-                  <span className="min-w-0 flex-1 truncate">{line.name}</span>
-                  <span className="tabular-nums text-muted-foreground">
+                {/* The name wraps rather than truncating: on a 320px phone the four columns
+                    left it about 40px, and the receipt read "Teh …". Below `sm` the gaps and
+                    the total column also give a little back; from `sm` it is as before. */}
+                <div className="flex items-baseline gap-2 sm:gap-3">
+                  <span className="w-8 shrink-0 tabular-nums text-muted-foreground">
+                    {line.quantity}×
+                  </span>
+                  <span className="min-w-0 flex-1 wrap-break-word">{line.name}</span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
                     {formatMoney(line.unitPrice)}
                   </span>
-                  <span className="w-24 text-right tabular-nums">
+                  <span className="w-20 shrink-0 text-right tabular-nums sm:w-24">
                     {formatMoney(lineTotal(line))}
                   </span>
                 </div>
@@ -432,7 +437,9 @@ export function OrderDetailPage() {
                         key={modifier.optionId}
                         className="flex items-baseline gap-2 text-xs text-muted-foreground"
                       >
-                        <span className="min-w-0 flex-1 truncate">{modifier.optionName}</span>
+                        <span className="min-w-0 flex-1 wrap-break-word">
+                          {modifier.optionName}
+                        </span>
                         {modifier.priceAdjustment !== 0 && (
                           <span className="tabular-nums">
                             {modifier.priceAdjustment > 0 ? '+' : '−'}

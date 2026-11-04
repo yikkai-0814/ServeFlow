@@ -49,6 +49,8 @@ export const zh: Dictionary = {
   'nav.reports': '报表',
   'nav.newOrder': '新订单',
   'nav.orders': '订单',
+  'nav.unpaidOrdersOne': '今日有 1 张未付款订单',
+  'nav.unpaidOrdersOther': '今日有 {{count}} 张未付款订单',
   'nav.menu': '菜单',
   'nav.staff': '员工',
   'nav.queue': '备餐队列',

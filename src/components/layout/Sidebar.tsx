@@ -1,8 +1,9 @@
 import { useTranslation } from '@/features/i18n/useTranslation'
-import { useCallback, useState } from 'react'
+import { useCallback, useId, useState } from 'react'
 import { NavLink } from 'react-router'
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 
+import { NavCountBadge } from '@/components/layout/NavCountBadge'
 import { navItemsForRole } from '@/components/layout/nav-items'
 import {
   parseCollapsed,
@@ -55,11 +56,17 @@ function writeStoredCollapsed(collapsed: boolean): void {
  * The width is the whole mechanism: `main` is `flex-1`, so narrowing this column hands the
  * space straight to the page without either side knowing about the other.
  */
-export function Sidebar() {
+export function Sidebar({
+  unpaidOrders = null,
+}: {
+  /** Today's unpaid orders, badged on the Orders link. Null or zero shows no badge. */
+  unpaidOrders?: number | null
+} = {}) {
   const { role } = useAuth()
   const { t } = useTranslation()
   const items = navItemsForRole(role)
   const [collapsed, setCollapsed] = useState<boolean>(() => readStoredCollapsed())
+  const badgeId = useId()
 
   const toggle = useCallback(() => {
     setCollapsed((current) => {
@@ -83,6 +90,8 @@ export function Sidebar() {
     >
       {items.map(({ to, labelKey, icon: Icon }) => {
         const label = t(labelKey)
+        const count = to === '/orders' ? unpaidOrders : null
+        const badged = count !== null && count > 0
         return (
           <NavLink
             key={to}
@@ -90,6 +99,8 @@ export function Sidebar() {
             // The label is the accessible name whether or not it is painted on screen, so a
             // screen reader announces the same navigation in both states.
             aria-label={label}
+            // The count is described, not named: "Orders", then "7 unpaid orders today".
+            aria-describedby={badged ? badgeId : undefined}
             title={collapsed ? label : undefined}
             className={({ isActive }) =>
               cn(
@@ -132,6 +143,19 @@ export function Sidebar() {
                   {label}
                 </span>
                 {!collapsed && <span className="hidden truncate xl:inline">{label}</span>}
+                {/* On the icon's corner in the rail; at the item's right end when the full
+                    sidebar shows its labels. */}
+                <NavCountBadge
+                  count={count}
+                  describedById={badgeId}
+                  description={t(count === 1 ? 'nav.unpaidOrdersOne' : 'nav.unpaidOrdersOther', {
+                    count: count ?? 0,
+                  })}
+                  className={cn(
+                    'absolute top-0.5 right-0.5',
+                    !collapsed && 'xl:static xl:ml-auto xl:ring-0',
+                  )}
+                />
                 {isActive && <span className="sr-only">(current page)</span>}
               </>
             )}

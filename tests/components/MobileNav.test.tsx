@@ -91,4 +91,15 @@ describe('MobileNav', () => {
     renderNav('staff')
     expect(screen.getByRole('navigation', { name: 'Main' })).not.toBeNull()
   })
+
+  it('stays within min-h-mobile-nav with a two-line label', () => {
+    // "Pesanan Baharu" wraps on a phone. With py-1.5 on the bar and on each link that took the
+    // bar to 77px, 9px past the 68px the till's sticky bars offset by, so it sat on top of them.
+    renderNav('staff')
+    const nav = screen.getByRole('navigation', { name: 'Main' })
+    expect(nav.className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-mobile-nav', 'pt-1']))
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.className.split(/\s+/)).toContain('py-0.5')
+    }
+  })
 })

@@ -404,3 +404,18 @@ describe('the card actions on a narrow phone', () => {
     )
   })
 })
+
+describe('the order number on a kitchen touchscreen', () => {
+  it('takes a tap across the full touch height, though the number itself stays small', () => {
+    renderQueue()
+    const link = within(card()).getByRole('link')
+    expect(link.className.split(/\s+/)).toEqual(
+      expect.arrayContaining([
+        'relative',
+        'before:absolute',
+        'before:h-touch',
+        'before:min-w-touch',
+      ]),
+    )
+  })
+})

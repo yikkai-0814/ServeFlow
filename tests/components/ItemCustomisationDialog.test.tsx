@@ -316,4 +316,17 @@ describe('the dialog on a tablet', () => {
     const [chosen] = onAdd.mock.calls[0] as [{ optionId: string }[]]
     expect(chosen.map((entry) => entry.optionId)).toEqual(['veg-none'])
   })
+
+  it('wraps an option’s name rather than cutting it off beside its price', () => {
+    setup([ADDONS])
+    const name = optionById('add-chicken').querySelector('span')!
+    expect(classes(name)).toContain('wrap-break-word')
+    expect(classes(name)).not.toContain('truncate')
+  })
+
+  it('gives the footer buttons the same touch height as the options', () => {
+    setup([group()])
+    expect(classes(addButton())).toContain('h-touch')
+    expect(classes(screen.getByTestId('customise-cancel'))).toContain('h-touch')
+  })
 })
