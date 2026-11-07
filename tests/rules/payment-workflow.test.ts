@@ -50,7 +50,8 @@ import { buildReport, indexCostHistory, type ReportOrder } from '@/features/repo
 
 const ADMIN_UID = 'admin-uid'
 const STAFF_UID = 'staff-uid'
-const DATE = '2026-09-11'
+// Today, because the rules refuse a sale filed under any other day.
+const DATE = new Date().toISOString().slice(0, 10)
 
 const TOTAL = 1550
 const CASH_GIVEN = 2000
@@ -143,7 +144,7 @@ const orderDoc = (over: Record<string, unknown> = {}) => ({
   orderType: 'dine_in',
   tableNumber: '5',
   total: TOTAL,
-  createdAt: new Date(),
+  createdAt: serverTimestamp(),
   createdBy: STAFF_UID,
   createdByName: 'Shared Till',
   staffId: 'alice',
@@ -161,7 +162,7 @@ const paymentDoc = (orderId: string, over: Record<string, unknown> = {}) => ({
   amount: TOTAL,
   cashTendered: CASH_GIVEN,
   changeGiven: CHANGE,
-  paidAt: new Date(),
+  paidAt: serverTimestamp(),
   paidBy: STAFF_UID,
   paidByName: 'Shared Till',
   paidByStaffId: 'alice',

@@ -7,7 +7,15 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing'
-import { collection, deleteDoc, doc, getDocs, setDoc, updateDoc } from 'firebase/firestore'
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 const ADMIN_UID = 'admin-uid'
@@ -41,7 +49,7 @@ const staffMember = (over: Record<string, unknown> = {}) => ({
 /** A valid order attributed to the active staff member "Alice" (id `alice`). */
 const order = (over: Record<string, unknown> = {}) => ({
   number: 1,
-  businessDate: '2026-09-11',
+  businessDate: new Date().toISOString().slice(0, 10),
   lines: [{ menuItemId: 'i1', name: 'Flat White', unitPrice: 1250, quantity: 1 }],
   total: 1250,
   // Phase 7: every order records how it is served. Dine-in carries a table number;
@@ -50,7 +58,7 @@ const order = (over: Record<string, unknown> = {}) => ({
   tableNumber: '5',
   // No payment fields: an order is placed unpaid, and the rules refuse one that claims
   // otherwise. Payment lives in orderPayments/{orderId} — see payments.rules.test.ts.
-  createdAt: new Date(),
+  createdAt: serverTimestamp(),
   createdBy: STAFF_UID,
   createdByName: 'Shared Till',
   staffId: 'alice',

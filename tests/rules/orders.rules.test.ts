@@ -16,13 +16,15 @@ import {
   setDoc,
   updateDoc,
   writeBatch,
+  serverTimestamp,
 } from 'firebase/firestore'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 const ADMIN_UID = 'admin-uid'
 const STAFF_UID = 'staff-uid'
 const OTHER_UID = 'other-uid'
-const DATE = '2026-09-11'
+// Today, because the rules refuse a sale filed under any other day.
+const DATE = new Date().toISOString().slice(0, 10)
 
 let testEnv: RulesTestEnvironment
 
@@ -70,7 +72,7 @@ const placedOrder = (uid = STAFF_UID) => ({
   orderType: 'dine_in',
   tableNumber: '5',
   total: 3190,
-  createdAt: new Date(),
+  createdAt: serverTimestamp(),
   createdBy: uid,
   createdByName: ACCOUNT_NAMES[uid] ?? 'Sam Staff',
   // Phase 6: every order names the staff identity that operated the till.
@@ -429,6 +431,88 @@ describe('counter rules: numbers cannot be skipped or reused', () => {
     })
     const db = testEnv.authenticatedContext(ADMIN_UID).firestore()
     await assertFails(deleteDoc(doc(db, 'counters', DATE)))
+  })
+})
+
+/**
+ * The server's clock, not the till's. An order's `createdAt` decides which historical cost it
+ * resolves to, and `businessDate` decides which day's takings it joins, so neither may be chosen
+ * by a client. The app sends serverTimestamp() and the device's local date.
+ */
+describe('order rules: when a sale happened is not the client\u2019s to say', () => {
+  const HOUR = 3_600_000
+  const dateAt = (offsetHours: number) =>
+    new Date(Date.now() + offsetHours * HOUR).toISOString().slice(0, 10)
+
+  async function asStaff() {
+    await seed()
+    return testEnv.authenticatedContext(STAFF_UID).firestore()
+  }
+
+  it('accepts the server timestamp the app sends', async () => {
+    const db = await asStaff()
+    await assertSucceeds(setDoc(doc(db, 'orders', 'o1'), placedOrder()))
+  })
+
+  it.each([
+    ['a year ago', -8760],
+    ['a minute ago', -1 / 60],
+    ['a year ahead', 8760],
+  ])('refuses a createdAt chosen by the client: %s', async (_label, offsetHours) => {
+    const db = await asStaff()
+    const createdAt = new Date(Date.now() + offsetHours * HOUR)
+    await assertFails(setDoc(doc(db, 'orders', 'o1'), { ...placedOrder(), createdAt }))
+  })
+
+  it('refuses the device clock too, however close it is', async () => {
+    const db = await asStaff()
+    await assertFails(setDoc(doc(db, 'orders', 'o1'), { ...placedOrder(), createdAt: new Date() }))
+  })
+
+  // Whatever the time of day this runs, these are the dates a real till could be showing. So a
+  // sale either side of midnight, in any zone, can never be refused.
+  it.each([-12, -11, -8, -5, -3, 0, 1, 3, 5.5, 8, 9, 10, 12, 13, 14])(
+    'accepts the local date of a till at UTC%s',
+    async (offsetHours) => {
+      const db = await asStaff()
+      await assertSucceeds(
+        setDoc(doc(db, 'orders', 'o1'), { ...placedOrder(), businessDate: dateAt(offsetHours) }),
+      )
+    },
+  )
+
+  it.each([
+    ['two days ago', -48],
+    ['a week ago', -168],
+    ['a year ago', -8760],
+    ['two days ahead', 48],
+    ['a month ahead', 720],
+  ])('refuses a businessDate of %s', async (_label, offsetHours) => {
+    const db = await asStaff()
+    await assertFails(
+      setDoc(doc(db, 'orders', 'o1'), { ...placedOrder(), businessDate: dateAt(offsetHours) }),
+    )
+  })
+
+  it.each(['2026-13-01', '2026-00-10', '2026-02-30', '0000-00-00', '9999-99-99'])(
+    'refuses %s, which is the right shape and not a date',
+    async (businessDate) => {
+      const db = await asStaff()
+      await assertFails(setDoc(doc(db, 'orders', 'o1'), { ...placedOrder(), businessDate }))
+    },
+  )
+
+  it('leaves reading old days as it was: this judges new sales, not history', async () => {
+    await seed()
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'orders', 'old'), {
+        ...placedOrder(),
+        businessDate: '2024-01-15',
+        createdAt: new Date('2024-01-15T04:00:00Z'),
+      })
+    })
+    const db = testEnv.authenticatedContext(STAFF_UID).firestore()
+    await assertSucceeds(getDoc(doc(db, 'orders', 'old')))
   })
 })
 

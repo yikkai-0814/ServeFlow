@@ -7,13 +7,23 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing'
-import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore'
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const ADMIN_UID = 'admin-uid'
 const STAFF_UID = 'staff-uid'
 const OTHER_UID = 'other-uid'
-const DATE = '2026-09-11'
+// Today, because the rules refuse a sale filed under any other day.
+const DATE = new Date().toISOString().slice(0, 10)
 
 /** The order every test pays for: total RM 31.90. */
 const UNPAID_ORDER_ID = 'order-unpaid'
@@ -51,7 +61,7 @@ const cashPayment = (uid = STAFF_UID, orderId = UNPAID_ORDER_ID) => ({
   amount: TOTAL,
   cashTendered: 5000,
   changeGiven: 1810,
-  paidAt: new Date(),
+  paidAt: serverTimestamp(),
   paidBy: uid,
   paidByName: 'Sam Staff',
   paidByStaffId: 'alice',
@@ -75,7 +85,7 @@ const order = (over: Record<string, unknown> = {}) => ({
   orderType: 'dine_in',
   tableNumber: '5',
   total: TOTAL,
-  createdAt: new Date(),
+  createdAt: serverTimestamp(),
   createdBy: STAFF_UID,
   createdByName: 'Sam Staff',
   staffId: 'alice',
@@ -211,6 +221,29 @@ describe('payment rules: who may record payment', () => {
     await assertFails(
       setDoc(doc(staffDb(), 'orderPayments', UNPAID_ORDER_ID), cashPayment(OTHER_UID)),
     )
+  })
+})
+
+describe('payment rules: when money was recorded is the server\u2019s to say', () => {
+  const HOUR = 3_600_000
+
+  it.each([
+    ['a year ago', -8760],
+    ['a minute ago', -1 / 60],
+    ['a year ahead', 8760],
+  ])('refuses a paidAt chosen by the client: %s', async (_label, offsetHours) => {
+    await seed()
+    const db = testEnv.authenticatedContext(STAFF_UID).firestore()
+    const paidAt = new Date(Date.now() + offsetHours * HOUR)
+    await assertFails(
+      setDoc(doc(db, 'orderPayments', UNPAID_ORDER_ID), { ...cashPayment(), paidAt }),
+    )
+  })
+
+  it('accepts the server timestamp the app sends', async () => {
+    await seed()
+    const db = testEnv.authenticatedContext(STAFF_UID).firestore()
+    await assertSucceeds(setDoc(doc(db, 'orderPayments', UNPAID_ORDER_ID), cashPayment()))
   })
 })
 

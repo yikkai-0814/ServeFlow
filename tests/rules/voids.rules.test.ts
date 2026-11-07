@@ -7,7 +7,16 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing'
-import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore'
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 const ADMIN_UID = 'admin-uid'
@@ -35,7 +44,7 @@ afterEach(async () => {
 
 const order = () => ({
   number: 1,
-  businessDate: '2026-09-11',
+  businessDate: new Date().toISOString().slice(0, 10),
   lines: [{ menuItemId: 'i1', name: 'Flat White', unitPrice: 1250, quantity: 2 }],
   total: ORDER_TOTAL,
   // Phase 7: every order records how it is served. Dine-in carries a table number;
@@ -45,7 +54,7 @@ const order = () => ({
   // Placed unpaid; payment is a separate document, and the rules refuse an order that
   // carries any. Voiding is unaffected either way — see payments.rules.test.ts for the
   // interaction between the two.
-  createdAt: new Date(),
+  createdAt: serverTimestamp(),
   createdBy: STAFF_UID,
   createdByName: 'Sam Staff',
   staffId: 'alice',
