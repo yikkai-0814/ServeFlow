@@ -12,7 +12,7 @@
  */
 import { assertSucceeds } from '@firebase/rules-unit-testing'
 import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   asRulesUser,
@@ -40,6 +40,10 @@ const WRONG_PIN = '000000'
 
 let admin: Account
 let till: Account
+
+// Under heavy load the Functions emulator can take over a minute to serve simultaneous calls,
+// and the Firebase client has its own limit of about 70 seconds on each call.
+vi.setConfig({ testTimeout: 120_000 })
 
 beforeAll(async () => {
   await startHarness()
