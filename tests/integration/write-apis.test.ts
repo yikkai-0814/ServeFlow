@@ -46,7 +46,6 @@ import {
   withManagerAuthorization,
 } from '@/features/pos/manager-authorization'
 import { recordPayment } from '@/features/pos/payment-api'
-import { createOrder } from '@/features/pos/pos-api'
 import { businessDateOf } from '@/features/pos/types'
 import { buildReport } from '@/features/reports/aggregate'
 import { fetchReportData } from '@/features/reports/reports-api'
@@ -57,6 +56,7 @@ import { auth, db } from '@/lib/firebase'
 import {
   ACCOUNT_PASSWORD,
   createAccount,
+  createOrder,
   resetEmulators,
   seed,
   signInAs,
@@ -142,7 +142,7 @@ afterEach(async () => {
   await resetEmulators()
 })
 
-describe('createOrder writes what the rules expect', () => {
+describe('the previous client’s direct write still satisfies the rules', () => {
   it('rings up a dine-in sale and numbers it from the day’s counter', async () => {
     await signInAs(staff)
     const created = await createOrder({

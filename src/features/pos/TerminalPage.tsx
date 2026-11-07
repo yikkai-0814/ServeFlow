@@ -28,7 +28,9 @@ import {
   decrementLine,
   EMPTY_CART,
   incrementLine,
+  refreshCart,
   removeLine,
+  StaleCartError,
   validateCart,
   type Cart,
 } from '@/features/pos/cart'
@@ -191,8 +193,9 @@ export function TerminalPage() {
       const created = await createOrder({
         cart,
         placement: { orderType, tableNumber },
-        user,
         staff,
+        language,
+        uid: profile.uid,
       })
       const service = orderTypeSummaryOf({
         orderType: placement.orderType,
@@ -213,6 +216,11 @@ export function TerminalPage() {
       // here because the cart they came from has just been cleared.
       setAwaitingPayment({ id: created.id, number: created.number, total, service, user, staff })
     } catch (caught) {
+      // Nothing was placed. The cart takes on the current prices and names in plain sight, under
+      // the message that says so, and it is placed again only when somebody chooses to.
+      if (caught instanceof StaleCartError) {
+        setCart((current) => refreshCart(current, caught.current))
+      }
       setError(isMessageError(caught) ? caught.detail : message('terminal.placeFailed'))
     } finally {
       setPending(false)

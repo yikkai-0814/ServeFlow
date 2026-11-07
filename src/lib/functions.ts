@@ -10,7 +10,7 @@ import { app } from '@/lib/firebase'
  * everything about the caller from it — which is why this uses the till's own app and never
  * the borrowed manager session in authorizer.ts.
  *
- * Created lazily: only the void dialog and the admin's PIN settings need it.
+ * Created lazily: a page that never places an order or touches a PIN has no need of it.
  */
 let functions: Functions | null = null
 

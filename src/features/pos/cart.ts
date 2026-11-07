@@ -16,7 +16,7 @@
  * new one, and that distinction can never be collapsed.
  */
 
-import { message, type Message } from '@/features/i18n/messages'
+import { message, MessageError, type Message } from '@/features/i18n/messages'
 import {
   lineKeyOf,
   modifiersTotal,
@@ -142,6 +142,58 @@ export function lineTotal(line: { unitPrice: number; quantity: number }): number
 
 export function cartTotal(cart: Cart): number {
   return cart.reduce((sum, line) => sum + lineTotal(line), 0)
+}
+
+/** One line as the menu has it now, read by the server. In cart order, as sent. */
+export interface CurrentLine {
+  name: string
+  basePrice: number
+  unitPrice: number
+  /** Each chosen option's adjustment, in the order the line holds them, as are the names. */
+  adjustments: readonly number[]
+  groupNames: readonly string[]
+  optionNames: readonly string[]
+}
+
+/**
+ * The server refused an order because the menu's prices or names are no longer the ones this cart
+ * holds. It carries the current ones so the cart can show them: a cart left as it was could only
+ * be refused again, for the same reason.
+ */
+export class StaleCartError extends MessageError {
+  readonly current: readonly CurrentLine[]
+
+  constructor(detail: Message, current: readonly CurrentLine[]) {
+    super(detail)
+    this.name = 'StaleCartError'
+    this.current = current
+  }
+}
+
+/**
+ * The same cart as the menu has it now, for somebody to look at before placing it again.
+ *
+ * Left alone if the lines no longer correspond: the cart changed while the refusal was on its way
+ * back, so this describes a cart that no longer exists. Placing it again will say so.
+ */
+export function refreshCart(cart: Cart, current: readonly CurrentLine[]): Cart {
+  if (current.length !== cart.length) return cart
+  return cart.map((line, index) => {
+    const latest = current[index]
+    if (!latest || latest.adjustments.length !== line.modifiers.length) return line
+    return {
+      ...line,
+      name: latest.name,
+      basePrice: latest.basePrice,
+      unitPrice: latest.unitPrice,
+      modifiers: line.modifiers.map((modifier, position) => ({
+        ...modifier,
+        groupName: latest.groupNames[position] ?? modifier.groupName,
+        optionName: latest.optionNames[position] ?? modifier.optionName,
+        priceAdjustment: latest.adjustments[position] ?? modifier.priceAdjustment,
+      })),
+    }
+  })
 }
 
 /** Total number of physical items, for the "N items" badge. */

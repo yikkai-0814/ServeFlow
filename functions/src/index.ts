@@ -1,22 +1,28 @@
 /**
- * Admin PIN authorisation for voiding a sale.
- *
- * Three callables, and the only code that can read or write the PIN data:
+ * The two things the app cannot safely decide in a browser: who may void a sale, and what a sale
+ * costs. Four callables:
  *
  *   getAdminPinStatus      — any active user: is PIN authorisation available, and (for an
  *                            admin) have they set one. Never returns a hash.
  *   setAdminPin            — an admin sets or changes their OWN PIN, after proving their
  *                            password moments ago.
  *   voidOrderWithAdminPin  — a staff member (or admin) voids an order with an admin's PIN.
+ *   placeOrder             — any active user places an order. The till says what was chosen, and
+ *                            the prices, names and total come from the menu (see order.ts).
  *
- * The PIN collections (`adminPins`, `pinAttempts`, `pinSetupAttempts`) are refused to every
- * client by firestore.rules; only the Admin SDK here touches them. Everything else the app
- * does is still decided by the rules — this adds one trusted writer for one document,
- * `orderVoids/{orderId}`, and restates every condition the rules put on it (see void.ts).
+ * The PIN collections (`adminPins`, `pinAttempts`, `pinSetupAttempts`) and `orderRequests` are
+ * refused to every client by firestore.rules; only the Admin SDK here touches them. Everything
+ * else the app does is still decided by the rules. These are trusted writers for two documents,
+ * `orderVoids/{orderId}` and `orders/{orderId}`, and each restates what the rules put on it.
  */
 
 import { initializeApp } from 'firebase-admin/app'
-import { FieldValue, getFirestore, type DocumentSnapshot } from 'firebase-admin/firestore'
+import {
+  FieldValue,
+  getFirestore,
+  type DocumentSnapshot,
+  type Transaction,
+} from 'firebase-admin/firestore'
 import { logger } from 'firebase-functions'
 import { setGlobalOptions } from 'firebase-functions/v2'
 import {
@@ -26,6 +32,24 @@ import {
   type FunctionsErrorCode,
 } from 'firebase-functions/v2/https'
 
+import {
+  businessDateAt,
+  isReadableId,
+  MAX_ORDER_BYTES,
+  namesMatch,
+  parseCatalogueGroup,
+  parseCatalogueItem,
+  parsePlaceOrderRequest,
+  priceOrder,
+  pricesMatch,
+  requestFingerprint,
+  requestRecordId,
+  storedBytes,
+  type Catalogue,
+  type CatalogueGroup,
+  type CatalogueItem,
+  type RequestedLine,
+} from './order'
 import {
   EMPTY_WINDOW,
   hashPin,
@@ -71,6 +95,15 @@ type RefusalReason =
   | 'order-not-found'
   | 'already-voided'
   | 'invalid-operator'
+  | 'item-unavailable'
+  | 'selection-required'
+  | 'single-choice'
+  | 'option-withdrawn'
+  | 'option-unknown'
+  | 'price-changed'
+  | 'names-changed'
+  | 'request-reused'
+  | 'order-too-large'
 
 function refuse(
   code: FunctionsErrorCode,
@@ -348,6 +381,223 @@ export const voidOrderWithAdminPin = onCall(async (request) => {
 
   logger.info('Order voided with admin PIN', { orderId, admin: adminUid, requestedBy: caller.uid })
   return { ok: true }
+})
+
+// ---- placeOrder -----------------------------------------------------------------------------
+
+/** Firestore's ceiling on the values in an `in` filter. */
+const IN_FILTER_LIMIT = 30
+
+/**
+ * Everything on the menu this order touches, read inside its transaction so the prices it is
+ * charged at are the prices at the moment it was written.
+ */
+async function readCatalogue(
+  transaction: Transaction,
+  lines: readonly RequestedLine[],
+): Promise<Catalogue> {
+  const itemIds = [...new Set(lines.map((line) => line.menuItemId))]
+  const itemDocs = await transaction.getAll(...itemIds.map((id) => db.doc(`menuItems/${id}`)))
+
+  const items = new Map<string, CatalogueItem>()
+  for (const document of itemDocs) {
+    const item = parseCatalogueItem(document.id, document.data())
+    if (item) items.set(item.id, item)
+  }
+
+  const activeCategoryIds = new Set<string>()
+  // Ids the menu stored are filtered like ids a client sent: one Firestore cannot read would
+  // otherwise fail the whole order as an internal error, not as an item that cannot be sold.
+  const categoryIds = [...new Set([...items.values()].map((item) => item.categoryId))].filter(
+    isReadableId,
+  )
+  if (categoryIds.length > 0) {
+    const categories = await transaction.getAll(
+      ...categoryIds.map((id) => db.doc(`categories/${id}`)),
+    )
+    for (const category of categories) {
+      // Mirrors parseCategory: a category only counts if the till could have shown it.
+      const name = category.get('name')
+      if (category.get('active') === true && typeof name === 'string' && name.trim() !== '') {
+        activeCategoryIds.add(category.id)
+      }
+    }
+  }
+
+  // Two sources, as groupsForItem in the app has: what each item lists, and legacy groups that
+  // name the item themselves.
+  const groups = new Map<string, CatalogueGroup>()
+  const keep = (document: DocumentSnapshot) => {
+    const group = parseCatalogueGroup(document.id, document.data())
+    if (group) groups.set(group.id, group)
+  }
+
+  const attached = [
+    ...new Set([...items.values()].flatMap((item) => item.modifierGroupIds)),
+  ].filter(isReadableId)
+  if (attached.length > 0) {
+    const documents = await transaction.getAll(
+      ...attached.map((id) => db.doc(`modifierGroups/${id}`)),
+    )
+    documents.forEach(keep)
+  }
+
+  const known = [...items.keys()]
+  for (let start = 0; start < known.length; start += IN_FILTER_LIMIT) {
+    const owned = await transaction.get(
+      db
+        .collection('modifierGroups')
+        .where('itemId', 'in', known.slice(start, start + IN_FILTER_LIMIT)),
+    )
+    owned.docs.forEach(keep)
+  }
+
+  return { items, activeCategoryIds, groups: [...groups.values()] }
+}
+
+/**
+ * Places an order. The till says what was chosen; everything with a price or a name on it comes
+ * from the menu, read here. What the till says it is showing is compared with that, never stored.
+ *
+ * `requestId` is what makes a retry safe. A till that never heard back sends the same id, and
+ * this answers with the order already made rather than ringing it up twice. The record is keyed
+ * by the caller as well as the id, so the same id from another account is simply another request
+ * and can never return somebody else's order. It is written in the same transaction as the order,
+ * so two simultaneous retries contend, and the loser finds the record the winner left.
+ *
+ * Nothing is remembered about a refusal. A refused order wrote nothing, so the same request may
+ * be judged afresh.
+ *
+ * The order is exactly the document createOrder used to write from the till. Every read comes
+ * before the first write, as a Firestore transaction requires.
+ */
+export const placeOrder = onCall(async (request) => {
+  const caller = await requireActiveCaller(request)
+  const order = parsePlaceOrderRequest(request.data)
+  if (!order) refuse('invalid-argument', 'invalid-request')
+
+  const requestRef = db.doc(`orderRequests/${requestRecordId(caller.uid, order.requestId)}`)
+  const fingerprint = requestFingerprint(order)
+  const { operatorId } = order
+
+  const placed = await db.runTransaction(
+    async (transaction) => {
+      const businessDate = businessDateAt(new Date())
+      const counterRef = db.doc(`counters/${businessDate}`)
+      const callerRef = db.doc(`users/${caller.uid}`)
+      const operatorRef = operatorId !== null ? db.doc(`staffMembers/${operatorId}`) : null
+
+      const [existing, counter, callerProfile, operator] = await transaction.getAll(
+        requestRef,
+        counterRef,
+        callerRef,
+        ...(operatorRef ? [operatorRef] : []),
+      )
+
+      if (existing?.exists) {
+        if (existing.get('uid') !== caller.uid || existing.get('fingerprint') !== fingerprint) {
+          refuse('already-exists', 'request-reused')
+        }
+        return { id: existing.get('orderId') as string, number: existing.get('number') as number }
+      }
+
+      // Re-read here, so a deactivation that lands during this call still stops the sale.
+      const displayName = callerProfile?.get('displayName')
+      if (
+        callerProfile?.get('active') !== true ||
+        typeof displayName !== 'string' ||
+        displayName.trim() === ''
+      ) {
+        refuse('permission-denied', 'not-allowed')
+      }
+
+      // Who rang it up, decided the same way a PIN void decides who asked for it.
+      const initiator = resolveInitiator(
+        caller.uid,
+        {
+          exists: callerProfile.exists,
+          active: callerProfile.get('active'),
+          name: displayName,
+        },
+        operatorId,
+        operator
+          ? { exists: operator.exists, active: operator.get('active'), name: operator.get('name') }
+          : null,
+      )
+      if (!initiator) refuse('failed-precondition', 'invalid-operator')
+
+      const catalogue = await readCatalogue(transaction, order.lines)
+      const priced = priceOrder(order.lines, order.language, catalogue)
+      if (!priced.ok) {
+        const { ok: _ok, reason, ...details } = priced
+        refuse(
+          reason === 'invalid-request' ? 'invalid-argument' : 'failed-precondition',
+          reason,
+          details,
+        )
+      }
+
+      // The till showed something else. Nothing is written: somebody has to see what is current
+      // first, so it goes back for the cart to show. Both price checks, because a total can agree
+      // while the lines under it do not. A price outranks a name, since it is the one that costs
+      // the customer something, and either way the cart takes on both.
+      const current = {
+        total: priced.total,
+        lines: priced.lines.map((line) => ({
+          name: line.name,
+          basePrice: line.basePrice,
+          unitPrice: line.unitPrice,
+          adjustments: line.modifiers.map((modifier) => modifier.priceAdjustment),
+          groupNames: line.modifiers.map((modifier) => modifier.groupName),
+          optionNames: line.modifiers.map((modifier) => modifier.optionName),
+        })),
+      }
+      if (priced.total !== order.expectedTotal || !pricesMatch(order.lines, priced.lines)) {
+        refuse('failed-precondition', 'price-changed', current)
+      }
+      if (!namesMatch(order.lines, priced.lines)) {
+        refuse('failed-precondition', 'names-changed', current)
+      }
+
+      const lastNumber: unknown = counter?.get('lastNumber')
+      const number = (typeof lastNumber === 'number' ? lastNumber : 0) + 1
+      const orderRef = db.collection('orders').doc()
+      const record = {
+        number,
+        businessDate,
+        lines: priced.lines,
+        total: priced.total,
+        orderType: order.orderType,
+        // Absent rather than null on a takeaway, which is what every reader and the rules expect.
+        ...(order.tableNumber !== null ? { tableNumber: order.tableNumber } : {}),
+        createdBy: caller.uid,
+        createdByName: displayName,
+        staffId: initiator.staffId,
+        staffName: initiator.staffName,
+      }
+
+      // Firestore would refuse this at commit, and the till could only call that a failure. The
+      // same is true of everything above: a refusal here has written nothing and spent no number.
+      if (storedBytes(record) > MAX_ORDER_BYTES) refuse('failed-precondition', 'order-too-large')
+
+      transaction.set(counterRef, { lastNumber: number })
+      transaction.create(orderRef, { ...record, createdAt: FieldValue.serverTimestamp() })
+      transaction.create(requestRef, {
+        uid: caller.uid,
+        fingerprint,
+        orderId: orderRef.id,
+        number,
+        createdAt: FieldValue.serverTimestamp(),
+      })
+
+      return { id: orderRef.id, number }
+    },
+    // Every sale on a day shares one counter, so simultaneous tills retry against each other.
+    { maxAttempts: 10 },
+  )
+
+  logger.info('Order placed', { orderId: placed.id, number: placed.number, uid: caller.uid })
+  return placed
 })
 
 /**

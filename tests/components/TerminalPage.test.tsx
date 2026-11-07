@@ -20,6 +20,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Operator } from '@/features/staff/staff-session'
 import type { OrderView } from '@/features/pos/orders-view'
 import type { PaymentState } from '@/features/pos/payments'
+import { StaleCartError } from '@/features/pos/cart'
+import { MessageError } from '@/features/i18n/messages'
 import { recordPayment } from '@/features/pos/payment-api'
 import { createOrder } from '@/features/pos/pos-api'
 import { TerminalPage } from '@/features/pos/TerminalPage'
@@ -301,14 +303,15 @@ describe('New Order: consecutive orders can be different people', () => {
     ])
   })
 
-  it('still sends the signed-in account alongside the operator', async () => {
-    // Two identities on one sale, unchanged by this phase: the credential that wrote it and
-    // the person who took it. The rules check both.
+  it('names the operator and leaves the signed-in account to the server', async () => {
+    // Two identities on one sale, unchanged: the credential that wrote it and the person who
+    // took it. placeOrder reads the first from the verified caller, so it is not sent at all.
     const { user } = renderComponent(<TerminalPage />)
     await placeAnOrderAs(user, 'Bob')
 
     const [params] = createOrderMock.mock.calls[0] ?? []
-    expect(params?.user).toEqual({ uid: 'till-uid', displayName: 'Shared Till' })
+    expect(params).not.toHaveProperty('user')
+    expect(params?.uid).toBe('till-uid')
     expect(params?.staff).toEqual({ id: 'bob', name: 'Bob' })
   })
 
@@ -572,6 +575,121 @@ describe('New Order: a payment that does not go through', () => {
 
     expect(banner().getAttribute('data-settlement')).toBe('paid')
     expect(banner().textContent).toContain('paid by E-Wallet')
+  })
+})
+
+describe('New Order: a price that changed while the cart was open', () => {
+  const pricesChanged = () =>
+    new StaleCartError({ key: 'terminal.pricesChanged', params: { total: 'RM 14.00' } }, [
+      {
+        name: 'Flat White',
+        basePrice: 1400,
+        unitPrice: 1400,
+        adjustments: [],
+        groupNames: [],
+        optionNames: [],
+      },
+    ])
+
+  it('says so, and shows the new total before anything is placed', async () => {
+    createOrderMock.mockRejectedValueOnce(pricesChanged())
+    const { user } = renderComponent(<TerminalPage />)
+    await placeOnlyAs(user, 'Alice')
+
+    expect(await screen.findByRole('alert')).not.toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain('RM 14.00')
+    expect(screen.getByTestId('cart-total').textContent).toBe('RM 14.00')
+  })
+
+  it('does not move on to the payment question', async () => {
+    createOrderMock.mockRejectedValueOnce(pricesChanged())
+    const { user } = renderComponent(<TerminalPage />)
+    await placeOnlyAs(user, 'Alice')
+
+    await screen.findByRole('alert')
+    expect(deciding()).toBe(false)
+    expect(asking()).toBe(false)
+    expect(recordPaymentMock).not.toHaveBeenCalled()
+  })
+
+  it('leaves placing it again to the staff member', async () => {
+    createOrderMock.mockRejectedValueOnce(pricesChanged())
+    const { user } = renderComponent(<TerminalPage />)
+    await placeOnlyAs(user, 'Alice')
+
+    await screen.findByRole('alert')
+    expect(createOrderMock).toHaveBeenCalledOnce()
+
+    await user.click(screen.getByTestId('place-order'))
+    await waitFor(() => expect(deciding()).toBe(true))
+    expect(createOrderMock).toHaveBeenCalledTimes(2)
+    expect(createOrderMock.mock.calls[1]?.[0].cart[0]?.unitPrice).toBe(1400)
+    expect(screen.getByTestId('payment-decision').textContent).toContain('RM 14.00')
+  })
+
+  it('keeps the cart, the table and the operator as they were', async () => {
+    createOrderMock.mockRejectedValueOnce(pricesChanged())
+    const { user } = renderComponent(<TerminalPage />)
+    await placeOnlyAs(user, 'Alice')
+
+    await screen.findByRole('alert')
+    expect((screen.getByLabelText('Table number') as HTMLInputElement).value).toBe('5')
+    expect(screen.getAllByText('Flat White')).toHaveLength(2) // on the menu, and still in the cart
+
+    await user.click(screen.getByTestId('place-order'))
+    await waitFor(() => expect(createOrderMock).toHaveBeenCalledTimes(2))
+    expect(lastOperator()).toEqual({ id: 'alice', name: 'Alice' })
+  })
+
+  it('leaves the cart alone for any other refusal', async () => {
+    createOrderMock.mockRejectedValueOnce(
+      new MessageError({ key: 'terminal.itemUnavailable', params: { name: 'Flat White' } }),
+    )
+    const { user } = renderComponent(<TerminalPage />)
+    await placeOnlyAs(user, 'Alice')
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Flat White')
+    expect(screen.getByTestId('cart-total').textContent).toBe('RM 12.50')
+    expect(deciding()).toBe(false)
+  })
+})
+
+describe('New Order: a name that changed while the cart was open', () => {
+  const namesChanged = () =>
+    new StaleCartError({ key: 'terminal.namesChanged' }, [
+      {
+        name: 'Flat White Large',
+        basePrice: 1250,
+        unitPrice: 1250,
+        adjustments: [],
+        groupNames: [],
+        optionNames: [],
+      },
+    ])
+
+  it('says the menu changed, and shows the new name without touching the total', async () => {
+    createOrderMock.mockRejectedValueOnce(namesChanged())
+    const { user } = renderComponent(<TerminalPage />)
+    await placeOnlyAs(user, 'Alice')
+
+    expect((await screen.findByRole('alert')).textContent).toContain('The menu has changed')
+    expect(screen.getByRole('alert').textContent).not.toContain('Prices')
+    expect(screen.getByText('Flat White Large')).not.toBeNull()
+    expect(screen.getByTestId('cart-total').textContent).toBe('RM 12.50')
+    expect(deciding()).toBe(false)
+  })
+
+  it('leaves placing it again to the staff member, under the name now on screen', async () => {
+    createOrderMock.mockRejectedValueOnce(namesChanged())
+    const { user } = renderComponent(<TerminalPage />)
+    await placeOnlyAs(user, 'Alice')
+
+    await screen.findByRole('alert')
+    expect(createOrderMock).toHaveBeenCalledOnce()
+
+    await user.click(screen.getByTestId('place-order'))
+    await waitFor(() => expect(deciding()).toBe(true))
+    expect(createOrderMock.mock.calls[1]?.[0].cart[0]?.name).toBe('Flat White Large')
   })
 })
 

@@ -18,7 +18,7 @@
     "test:components": "vitest run tests/components",
     "test:rules": "firebase emulators:exec --only firestore \"vitest run tests/rules\"",
     "test:integration": "firebase emulators:exec --only firestore,auth \"vitest run tests/integration\"",
-    "test:functions": "npm run build:functions && firebase emulators:exec --only functions,firestore,auth --project demo-ordering-system \"vitest run tests/functions\""
+    "test:functions": "npm run build:functions && firebase emulators:exec --only functions,firestore,auth --project demo-ordering-system \"vitest run tests/functions --no-file-parallelism\""
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

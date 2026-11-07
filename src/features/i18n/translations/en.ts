@@ -159,6 +159,11 @@ export const en = {
   'terminal.noItemsBlurb':
     'An administrator needs to add menu items, or make existing ones available.',
   'terminal.placeFailed': 'The order could not be placed.',
+  'terminal.pricesChanged':
+    'Prices have changed. The new total is {{total}}. Check the order, then place it again.',
+  'terminal.namesChanged': 'The menu has changed. Check the order, then place it again.',
+  'terminal.itemUnavailable': '“{{name}}” is no longer available. Remove it to continue.',
+  'terminal.orderTooLarge': 'This order is too large to save. Split it into two orders.',
   'terminal.unpaidNote': 'Once the order is placed, take payment now or collect it later.',
   'terminal.placedBanner':
     'Order #{{number}} placed · {{total}} · {{service}} · unpaid. Record payment from the Orders page once the customer has paid.',

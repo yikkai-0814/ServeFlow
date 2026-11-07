@@ -166,6 +166,12 @@ export async function signOutAll(): Promise<void> {
 
 // ---- Calling the functions -------------------------------------------------------------------
 
+/** The callable client, for code under test that takes one rather than calling by name. */
+export function clientFunctions(): Functions {
+  if (!functions) throw new Error('startHarness() has not run.')
+  return functions
+}
+
 export async function call<T = unknown>(name: string, data?: unknown): Promise<T> {
   const callable = httpsCallable<unknown, T>(functions!, name)
   return (await callable(data)).data

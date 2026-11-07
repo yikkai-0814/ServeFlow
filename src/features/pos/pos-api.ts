@@ -1,10 +1,24 @@
-import { MessageError } from '@/features/i18n/messages'
-import { collection, doc, runTransaction, serverTimestamp } from 'firebase/firestore'
+import type { Language } from '@/features/i18n/languages'
+import { message, MessageError, type Message } from '@/features/i18n/messages'
+import { FirebaseError } from 'firebase/app'
+import { httpsCallable } from 'firebase/functions'
 
-import { cartTotal, validateCart, type Cart } from '@/features/pos/cart'
+import {
+  cartTotal,
+  StaleCartError,
+  validateCart,
+  type Cart,
+  type CurrentLine,
+} from '@/features/pos/cart'
 import { validatePlacement, type OrderType } from '@/features/pos/order-type'
-import { businessDateOf } from '@/features/pos/types'
-import { db } from '@/lib/firebase'
+import {
+  fingerprintOf,
+  forgetRequest,
+  releaseRequest,
+  requestIdFor,
+} from '@/features/pos/pending-order'
+import { appFunctions } from '@/lib/functions'
+import { formatMoney } from '@/lib/money'
 
 export interface CreateOrderParams {
   cart: Cart
@@ -15,13 +29,19 @@ export interface CreateOrderParams {
    * `tableNumber` is the text typed into the field; it is ignored entirely for a takeaway.
    */
   placement: { orderType: OrderType; tableNumber: string }
-  /** The signed-in Firebase account. Rules require createdBy to equal this uid. */
-  user: { uid: string; displayName: string }
   /**
-   * The staff identity operating the till. Separate from `user` on purpose: one shared
-   * login serves the whole shift, so the account cannot say who rang the sale up.
+   * The staff identity operating the till. Separate from the signed-in account on purpose: one
+   * shared login serves the whole shift, so the account cannot say who rang the sale up. Only
+   * the id is sent; the server looks the person up.
    */
   staff: { id: string; name: string }
+  /** The till's language, which is the language an order records its names in. */
+  language: Language
+  /**
+   * The signed-in account, which an unanswered attempt is remembered under on this device. Never
+   * sent: the server takes the caller from the verified token.
+   */
+  uid: string
 }
 
 export interface CreatedOrder {
@@ -30,17 +50,17 @@ export interface CreatedOrder {
 }
 
 /**
- * Records a sale. **Creates it unpaid** — taking the money is a separate step.
+ * Records a sale. **Creates it unpaid**, and taking the money is a separate step: see
+ * payment-api.ts.
  *
- * Nothing about payment is written here, and the rules refuse an order that carries a
- * payment method, tendered amount or change. That is what stops a client declaring its own
- * sale paid at creation and bypassing `recordPayment`, whose document is the only thing
- * that settles an order. See payment-api.ts and firestore.rules.
+ * This says what was chosen, and `placeOrder` in functions/ reads the prices and names from the
+ * menu, works out the total and writes the order and its number in one transaction. The cart's
+ * prices, names and total go with it only so a stale cart can be refused rather than recorded with
+ * a figure or a word nobody was shown: nothing the order records comes from them.
  *
- * The order number and the order itself are written in **one transaction**: the day's
- * counter is read, advanced by exactly one, and the order stamped with the new number. Two
- * tills ringing up simultaneously cannot therefore hand out the same number — the loser of
- * the race retries against the updated counter.
+ * A failure may mean the order was placed and the reply was lost, so trying the same order again
+ * reuses its request id, and the server answers with the order it already made rather than
+ * ringing it up twice. See pending-order.ts, which is what carries that across a reload.
  *
  * Throughput note: every sale on a given day touches a single counter document, which
  * Firestore sustains at roughly one write per second. That is far above a café counter's
@@ -49,75 +69,95 @@ export interface CreatedOrder {
 export async function createOrder({
   cart,
   placement,
-  user,
   staff,
+  language,
+  uid,
 }: CreateOrderParams): Promise<CreatedOrder> {
   const validation = validateCart(cart)
   if (!validation.ok) throw new MessageError(validation.error)
 
-  // A dine-in order without a usable table number never reaches Firestore. The rules check
-  // it again, independently — this is the message the counter sees, not the enforcement.
+  // A dine-in order without a usable table number never leaves the till. The server checks it
+  // again, independently — this is the message the counter sees, not the enforcement.
   const service = validatePlacement(placement.orderType, placement.tableNumber)
   if (!service.ok) throw new MessageError(service.error)
 
-  const total = cartTotal(cart)
-
-  const businessDate = businessDateOf(new Date())
-  const counterReference = doc(db, 'counters', businessDate)
-  const orderReference = doc(collection(db, 'orders'))
-
-  const number = await runTransaction(db, async (transaction) => {
-    const counter = await transaction.get(counterReference)
-    const lastNumber = counter.exists() ? Number(counter.data().lastNumber) : 0
-    const next = lastNumber + 1
-
-    if (counter.exists()) {
-      transaction.update(counterReference, { lastNumber: next })
-    } else {
-      transaction.set(counterReference, { lastNumber: 1 })
-    }
-
-    transaction.set(orderReference, {
-      number: next,
-      businessDate,
-      // Lines are stored as plain snapshots — no reference back to the menu item, and none
-      // back to its customisation configuration either. `lineId` is deliberately NOT
-      // written: it is derived from the menu item and the chosen options, so an order that
-      // stored it could disagree with itself. Rendering re-derives it with the same
-      // function the cart merges on (see lineKeyOf).
-      lines: cart.map((line) => ({
-        menuItemId: line.menuItemId,
+  const request = {
+    lines: cart.map((line) => ({
+      menuItemId: line.menuItemId,
+      quantity: line.quantity,
+      selections: line.modifiers.map(({ groupId, optionId }) => ({ groupId, optionId })),
+      expected: {
         name: line.name,
         basePrice: line.basePrice,
         unitPrice: line.unitPrice,
-        modifiers: line.modifiers.map((modifier) => ({
-          groupId: modifier.groupId,
-          groupName: modifier.groupName,
-          optionId: modifier.optionId,
-          optionName: modifier.optionName,
-          priceAdjustment: modifier.priceAdjustment,
-        })),
-        quantity: line.quantity,
-      })),
-      total,
-      orderType: service.orderType,
-      // Conditional spread, never `tableNumber: null` or `undefined`. The rules refuse the
-      // KEY on a takeaway order, and Firestore rejects an undefined field value outright
-      // rather than omitting it — so this is what makes "absent" actually absent.
-      ...(service.orderType === 'dine_in' ? { tableNumber: service.tableNumber } : {}),
-      // No payment fields, by design — see the note above. An order is unpaid until an
-      // orderPayments document says otherwise.
-      createdAt: serverTimestamp(),
-      createdBy: user.uid,
-      createdByName: user.displayName,
-      // The rules check this member exists, is active, and that the name matches theirs
-      // right now — so the snapshot is provably accurate at the moment of sale.
-      staffId: staff.id,
-      staffName: staff.name,
-    })
+        adjustments: line.modifiers.map((modifier) => modifier.priceAdjustment),
+        groupNames: line.modifiers.map((modifier) => modifier.groupName),
+        optionNames: line.modifiers.map((modifier) => modifier.optionName),
+      },
+    })),
+    orderType: service.orderType,
+    tableNumber: service.tableNumber,
+    operatorId: staff.id,
+    language,
+    expectedTotal: cartTotal(cart),
+  }
 
-    return next
-  })
+  const requestId = requestIdFor(uid, await fingerprintOf(request))
 
-  return { id: orderReference.id, number }
+  const placeOrder = httpsCallable<unknown, CreatedOrder>(appFunctions(), 'placeOrder')
+  try {
+    const { data } = await placeOrder({ ...request, requestId })
+    forgetRequest(uid, requestId)
+    return { id: data.id, number: data.number }
+  } catch (caught) {
+    releaseRequest(uid, requestId)
+    throw refusalOf(caught, cart)
+  }
+}
+
+/** The server's refusal as something the till can say; anything else stays a plain failure. */
+function refusalOf(caught: unknown, cart: Cart): unknown {
+  if (!(caught instanceof FirebaseError)) return caught
+  const details = (caught as FirebaseError & { details?: unknown }).details
+  if (typeof details !== 'object' || details === null) return caught
+  const { reason, group, menuItemId, total, lines } = details as Record<string, unknown>
+
+  if ((reason === 'price-changed' || reason === 'names-changed') && typeof total === 'number') {
+    return new StaleCartError(
+      reason === 'price-changed'
+        ? message('terminal.pricesChanged', { total: formatMoney(total) })
+        : message('terminal.namesChanged'),
+      Array.isArray(lines) ? (lines as CurrentLine[]) : [],
+    )
+  }
+
+  const said = sentenceFor(reason, group, menuItemId, cart)
+  return said ? new MessageError(said) : caught
+}
+
+function sentenceFor(
+  reason: unknown,
+  group: unknown,
+  menuItemId: unknown,
+  cart: Cart,
+): Message | null {
+  const groupName = typeof group === 'string' ? group : ''
+  switch (reason) {
+    case 'item-unavailable': {
+      const line = cart.find((candidate) => candidate.menuItemId === menuItemId)
+      return message('terminal.itemUnavailable', { name: line?.name ?? '' })
+    }
+    case 'selection-required':
+      return message('validation.chooseGroup', { group: groupName })
+    case 'single-choice':
+      return message('validation.chooseOnlyOne', { group: groupName })
+    case 'option-withdrawn':
+      return message('validation.optionWithdrawn', { group: groupName })
+    case 'option-unknown':
+      return message('validation.optionUnknown')
+    case 'order-too-large':
+      return message('terminal.orderTooLarge')
+    default:
+      return null
+  }
 }

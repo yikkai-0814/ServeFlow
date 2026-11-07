@@ -30,8 +30,9 @@ the menu, cost prices and till operators, and reads the day's takings, cost and 
 
 It is a React single-page application running directly on Firebase Authentication and Cloud
 Firestore, served from Firebase Hosting. Firestore security rules are the authorization
-boundary. The one exception is the Admin PIN for authorising a void: checking a PIN safely needs
-a trusted server, so three small Cloud Functions in `functions/` do that and nothing else.
+boundary. There are two exceptions, each needing a trusted server: checking an Admin PIN to
+authorise a void, and working out what an order costs. Four small Cloud Functions in `functions/`
+do that and nothing else.
 
 There are no customer accounts. Everyone who signs in works for the business, as either
 **Staff** or **Admin**.
@@ -195,6 +196,12 @@ Browser (React SPA)
 - **Enforcement.** Route guards (`RequireAuth`, `RequireRole`) keep people out of screens they
   cannot use, but the real boundary is `firestore.rules`: a staff account cannot read cost data,
   edit the menu or void a sale however the request is made.
+- **Server-priced orders.** The till sends only what was chosen. The `placeOrder` function reads
+  the prices and names from the menu, enforces the customisation rules, works out the total and
+  writes the order and its number in one transaction, using the café's own calendar
+  (`Asia/Kuala_Lumpur`). If a price or a name differs from what the till showed, nothing is
+  written and the cart shows the current ones first. A retry with the same request id returns the
+  same order.
 - **Admin PIN for voids.** When staff start a void, an administrator enters their own six-digit
   PIN. The PIN is checked by a Cloud Function, never in the browser: PINs are stored only as
   salted scrypt hashes in `adminPins/{uid}`, which no client can read or write. The function
@@ -322,7 +329,7 @@ memory and is lost when the emulators stop.
 | `npm run test:components`  | React components in jsdom with Testing Library                   |
 | `npm run test:rules`       | `firestore.rules` against the Firestore emulator                 |
 | `npm run test:integration` | The app's write APIs against the Firestore and Auth emulators    |
-| `npm run test:functions`   | The Admin PIN Cloud Functions against all three emulators        |
+| `npm run test:functions`   | The Cloud Functions against all three emulators                  |
 
 All suites run on Vitest. The rules, integration and functions suites start their own emulators
 with `firebase emulators:exec`, so stop `npm run emulators` before running them. Each suite uses
@@ -330,31 +337,44 @@ its own test project id, so none of them can reach a real project.
 
 ## Deployment
 
-Production configuration goes in `.env.production.local` (gitignored) with
-`VITE_USE_EMULATORS=false`. Then:
+Production configuration goes in `.env.production.local` (gitignored). It has to state every
+variable in `.env.example` for itself, with `VITE_USE_EMULATORS=false`: `npm run build` refuses to
+run otherwise, because Vite would fill any gap from `.env.local`.
 
-```bash
-npx firebase deploy --only hosting
-```
+The Cloud Functions need the **Blaze (pay-as-you-go)** plan to deploy; local development and the
+emulators do not. Placing an order depends on them, so the till cannot sell without them.
 
-`firebase.json` runs `npm run build` before every Hosting deploy. Security rules are deployed
-separately when they change:
+### Stage 1: the initial rollout
+
+Deploy in this order, one step at a time, and let each finish before starting the next:
 
 ```bash
 npx firebase deploy --only firestore:rules
+npx firebase deploy --only functions
+npx firebase deploy --only hosting
 ```
 
-The Admin PIN functions need the **Blaze (pay-as-you-go)** plan to deploy; local development and
-the emulators do not. Deploy them together with the Hosting build that calls them:
+The rules go first because tills still on the previous build keep working under them. The
+functions go before Hosting because the new build cannot place an order without `placeOrder`.
+`firebase.json` runs `npm run build` before every Hosting deploy.
 
-```bash
-npx firebase deploy --only functions,hosting
-```
+Then reload every till: an open tab keeps running the build it loaded. Direct writes to `orders`
+and `counters` stay open throughout this stage, for any till that has not reloaded yet.
+
+### Stage 2: closing direct order writes
+
+This is a separate, later rules change, and no part of the rollout above. Apply it only once the
+functions and Hosting are live and every till has reloaded the new client. From then on a till
+still running the previous build cannot place an order.
 
 ## Known limitations
 
-- Firestore rules cannot sum a list, so an order's `total` is not re-verified against its lines
-  on the server; the cart arithmetic is guarded by tested pure functions.
+- `placeOrder` prices every order the app places, but Firestore still accepts a direct write to
+  `orders` so that tills open on the previous build keep working. Rules cannot sum a list, so a
+  modified client can bypass the function until those writes are closed.
+- A till remembers an order it never heard back about for 30 minutes, as a hash and a request id,
+  so ringing the same order up again after a reload returns the original. Changing anything about
+  it, including a price or a name that moved in the meantime, makes it a new order.
 - Estimated profit is an upper bound wherever cost coverage is incomplete.
 - Till operator attribution is a record, not an authorization control — the signed-in role is
   the only real gate.

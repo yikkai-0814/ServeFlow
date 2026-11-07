@@ -528,6 +528,10 @@ service cloud.firestore {
     }
 
     // ---- Orders (immutable, and created UNPAID) ----------------------------
+    // New orders arrive through placeOrder in functions/, which prices them from the menu and
+    // writes through the Admin SDK, so these rules do not judge them. `allow create` below and the
+    // counter's writes remain only for tills still running the previous client.
+    //
     // Any active user may ring up a sale and read the day's orders — staff work the till.
     // Nobody may change or remove one afterwards, admins included: a sale is a financial
     // record. A void writes a counter-entry, and a payment writes its own document; neither
@@ -1118,6 +1122,14 @@ service cloud.firestore {
     }
 
     match /pinSetupAttempts/{uid} {
+      allow read, write: if false;
+    }
+
+    // ---- Order requests (server-only) --------------------------------------
+    // How placeOrder recognises a retry: one record per request, keyed by the caller and the
+    // request id. Named for the same reason as the PIN collections above.
+
+    match /orderRequests/{id} {
       allow read, write: if false;
     }
 

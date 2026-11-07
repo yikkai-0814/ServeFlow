@@ -153,6 +153,12 @@ export const ms: Dictionary = {
   'terminal.noItemsBlurb':
     'Pentadbir perlu menambah item menu, atau menjadikan item sedia ada tersedia.',
   'terminal.placeFailed': 'Pesanan itu tidak dapat dibuat.',
+  'terminal.pricesChanged':
+    'Harga telah berubah. Jumlah baharu ialah {{total}}. Semak pesanan, kemudian buat semula.',
+  'terminal.namesChanged': 'Menu telah berubah. Semak pesanan, kemudian buat semula.',
+  'terminal.itemUnavailable': '“{{name}}” tidak lagi tersedia. Alih keluar untuk meneruskan.',
+  'terminal.orderTooLarge':
+    'Pesanan ini terlalu besar untuk disimpan. Bahagikan kepada dua pesanan.',
   'terminal.unpaidNote':
     'Selepas pesanan dibuat, terima bayaran sekarang atau kutip bayaran kemudian.',
   'terminal.paymentDecision': 'Bagaimana anda mahu teruskan?',

@@ -1,8 +1,8 @@
 /**
  * Shared plumbing for the integration suite.
  *
- * The point of this suite is that it calls the app's own write functions — `createOrder`,
- * `recordPayment`, `setFulfillment`, `writeCost` and the rest — rather than hand-building
+ * The point of this suite is that it calls the app's own write functions — `recordPayment`,
+ * `setFulfillment`, `writeCost` and the rest — rather than hand-building
  * equivalent documents the way the rules suites do. The rules suites answer "would the
  * database accept this shape"; this one answers "is this the shape the app actually sends".
  * Without it, an API and its rules test could drift apart and both keep passing.
@@ -22,8 +22,12 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from 'firebase/auth'
-import { doc, setDoc } from 'firebase/firestore'
+import { collection, doc, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore'
 
+import { MessageError } from '@/features/i18n/messages'
+import { cartTotal, validateCart, type Cart } from '@/features/pos/cart'
+import { validatePlacement, type OrderType } from '@/features/pos/order-type'
+import { businessDateOf } from '@/features/pos/types'
 import { auth, db } from '@/lib/firebase'
 
 /** Must match VITE_FIREBASE_PROJECT_ID in vitest.config.ts — both name the same emulator data. */
@@ -173,4 +177,77 @@ export async function seed(write: (context: { firestore: () => typeof db }) => P
   await requireEnv().withSecurityRulesDisabled(async (context) => {
     await write(context as unknown as { firestore: () => typeof db })
   })
+}
+
+/**
+ * Places an order the way the previous client did: straight into Firestore, under the rules.
+ *
+ * The app now goes through `placeOrder` in functions/, which tests/functions covers. This stays
+ * for two reasons. Tills still open on the previous build keep writing this way until they reload,
+ * so the rules have to go on accepting exactly this; and everything else in this suite needs an
+ * order to work on, without needing the Functions emulator. It goes when direct writes are closed.
+ */
+export async function createOrder({
+  cart,
+  placement,
+  user,
+  staff,
+}: {
+  cart: Cart
+  placement: { orderType: OrderType; tableNumber: string }
+  user: { uid: string; displayName: string }
+  staff: { id: string; name: string }
+}): Promise<{ id: string; number: number }> {
+  const validation = validateCart(cart)
+  if (!validation.ok) throw new MessageError(validation.error)
+
+  const service = validatePlacement(placement.orderType, placement.tableNumber)
+  if (!service.ok) throw new MessageError(service.error)
+
+  const businessDate = businessDateOf(new Date())
+  const counterReference = doc(db, 'counters', businessDate)
+  const orderReference = doc(collection(db, 'orders'))
+
+  const number = await runTransaction(db, async (transaction) => {
+    const counter = await transaction.get(counterReference)
+    const lastNumber = counter.exists() ? Number(counter.data().lastNumber) : 0
+    const next = lastNumber + 1
+
+    if (counter.exists()) {
+      transaction.update(counterReference, { lastNumber: next })
+    } else {
+      transaction.set(counterReference, { lastNumber: 1 })
+    }
+
+    transaction.set(orderReference, {
+      number: next,
+      businessDate,
+      lines: cart.map((line) => ({
+        menuItemId: line.menuItemId,
+        name: line.name,
+        basePrice: line.basePrice,
+        unitPrice: line.unitPrice,
+        modifiers: line.modifiers.map((modifier) => ({
+          groupId: modifier.groupId,
+          groupName: modifier.groupName,
+          optionId: modifier.optionId,
+          optionName: modifier.optionName,
+          priceAdjustment: modifier.priceAdjustment,
+        })),
+        quantity: line.quantity,
+      })),
+      total: cartTotal(cart),
+      orderType: service.orderType,
+      ...(service.orderType === 'dine_in' ? { tableNumber: service.tableNumber } : {}),
+      createdAt: serverTimestamp(),
+      createdBy: user.uid,
+      createdByName: user.displayName,
+      staffId: staff.id,
+      staffName: staff.name,
+    })
+
+    return next
+  })
+
+  return { id: orderReference.id, number }
 }

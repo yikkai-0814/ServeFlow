@@ -39,6 +39,30 @@ afterAll(async () => {
   await testEnv.cleanup()
 })
 
+describe('order request records', () => {
+  const RECORD = 'orderRequests/record'
+
+  it('are closed to every signed-in client, in both directions', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), RECORD), { uid: STAFF_UID, orderId: 'order-1' })
+    })
+
+    for (const uid of [ADMIN_UID, STAFF_UID]) {
+      const db = testEnv.authenticatedContext(uid).firestore()
+      await assertFails(getDoc(doc(db, RECORD)))
+      await assertFails(getDocs(collection(db, 'orderRequests')))
+      await assertFails(setDoc(doc(db, 'orderRequests/new'), { uid }))
+      await assertFails(updateDoc(doc(db, RECORD), { orderId: 'other' }))
+      await assertFails(deleteDoc(doc(db, RECORD)))
+    }
+  })
+
+  it('are closed to a visitor', async () => {
+    const db = testEnv.unauthenticatedContext().firestore()
+    await assertFails(getDoc(doc(db, RECORD)))
+  })
+})
+
 afterEach(async () => {
   await testEnv.clearFirestore()
 })

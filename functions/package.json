@@ -1,7 +1,7 @@
 {
   "name": "serveflow-functions",
   "private": true,
-  "description": "Server-side Admin PIN verification for authorising a void. See README.md.",
+  "description": "Server-side Admin PIN verification and order pricing. See README.md.",
   "main": "lib/index.js",
   "engines": {
     "node": "22"
