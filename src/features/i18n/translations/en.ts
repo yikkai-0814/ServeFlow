@@ -19,6 +19,11 @@
 export const en = {
   // ---- The application itself ----------------------------------------------------
   'app.name': 'ServeFlow',
+  'app.errorTitle': 'Something went wrong',
+  'app.errorBlurb':
+    'This screen could not be shown. Anything already saved is safe, but an order that was not placed may need entering again.',
+  'app.errorReload': 'Reload',
+  'app.errorHome': 'Back to start',
 
   // ---- Shared actions and words --------------------------------------------------
   'common.save': 'Save',

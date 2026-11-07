@@ -13,6 +13,11 @@ import type { Dictionary } from '@/features/i18n/translations/en'
 export const ms: Dictionary = {
   // ---- The application itself ----------------------------------------------------
   'app.name': 'ServeFlow',
+  'app.errorTitle': 'Berlaku masalah',
+  'app.errorBlurb':
+    'Skrin ini tidak dapat dipaparkan. Apa-apa yang telah disimpan adalah selamat, tetapi pesanan yang belum dibuat mungkin perlu dimasukkan semula.',
+  'app.errorReload': 'Muat semula',
+  'app.errorHome': 'Kembali ke permulaan',
 
   // ---- Shared actions and words --------------------------------------------------
   'common.save': 'Simpan',

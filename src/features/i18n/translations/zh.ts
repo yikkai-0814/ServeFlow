@@ -13,6 +13,10 @@ import type { Dictionary } from '@/features/i18n/translations/en'
 export const zh: Dictionary = {
   // ---- The application itself ----------------------------------------------------
   'app.name': 'ServeFlow',
+  'app.errorTitle': '出现问题',
+  'app.errorBlurb': '无法显示此页面。已保存的内容不受影响，但尚未下单的订单可能需要重新输入。',
+  'app.errorReload': '重新加载',
+  'app.errorHome': '返回首页',
 
   // ---- Shared actions and words --------------------------------------------------
   'common.save': '保存',
