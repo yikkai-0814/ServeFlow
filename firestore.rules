@@ -325,9 +325,9 @@ service cloud.firestore {
     // column in the UI would leave the cost one devtools tab away. Splitting the
     // collection is what actually makes "staff cannot see cost" true.
     //
-    // Profit is deliberately not computed or stored anywhere: that belongs to the
-    // reporting phase, which will also have to snapshot cost onto each order line,
-    // because today's cost cannot answer what last month's margin was.
+    // Profit is deliberately not computed or stored anywhere. Reporting works it out, and it
+    // resolves each sale's cost from the journal below, because today's cost cannot answer
+    // what last month's margin was.
 
     function validItemCost() {
       let d = request.resource.data;
@@ -626,8 +626,7 @@ service cloud.firestore {
 
     function validOrder() {
       let d = request.resource.data;
-      // Key set from createOrder in src/features/pos/pos-api.ts. `tableNumber` is the one
-      // optional key, and validService decides which orderType may carry it — this only has
+      // The keys every order carries. `tableNumber` is the one optional key, and validService decides which orderType may carry it — this only has
       // to permit it. carriesNoPayment stays: it says the same thing for the three legacy
       // payment keys, but as a named reason rather than as a silent absence from a list.
       return hasFields(
@@ -761,7 +760,7 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // ---- Fulfilment (any active user, forward-only) ------------------------
+    // ---- Fulfilment (staff only, one step at a time) -----------------------
     // How far an order has got through being made and handed over: pending -> preparing ->
     // ready -> delivered. Its OWN document keyed by the order's id, for the same reason a
     // void and a payment are: orders are immutable, and putting a status on one would mean
@@ -776,11 +775,11 @@ service cloud.firestore {
     //     and cannot be born part-way through the workflow;
     //   * create is legal only into `preparing` — the single step out of pending;
     //   * update may move exactly ONE place forward. Skipping is refused, so no client can
-    //     jump an order to `delivered`, and backward is refused outright for staff;
-    //   * an admin may step exactly one place BACK, to correct a mis-tap. Without that the
-    //     forward path is a one-way door and a fat-fingered "delivered" is unfixable. It
-    //     stays with admins for the same reason voiding does: the person undoing the
-    //     mistake should not be the person who made it.
+    //     jump an order to `delivered`;
+    //   * staff may also take two steps back, to correct a mis-tap during service:
+    //     `preparing -> pending` and `ready -> preparing` (see staffReversibleStep below);
+    //   * `delivered` is final for every role. An admin moves nothing here at all, and a
+    //     delivered order that was wrong is voided, never rewound.
     //
     // Fulfilment says NOTHING about payment, and these rules deliberately never consult the
     // payment document. "Completed" is not stored anywhere — it is derived from both axes at
@@ -888,8 +887,8 @@ service cloud.firestore {
       let from = resource.data.status;
       // Finishing: the one moment being measured.
       return (to == 'ready' && from == 'preparing') ? d.readyAt == request.time
-        // Handing over, and the admin correction back out of it. A recorded finish stays
-        // exactly as it was and remains readable for the rest of the order's life.
+        // Handing over. A recorded finish stays exactly as it was and remains readable for the
+        // rest of the order's life.
         : (to == 'delivered' || to == 'ready') ? d.readyAt == priorReadyAt()
         // Back into the kitchen, or all the way back to the start: the order is not
         // finished, so it must not claim to be.
@@ -1012,19 +1011,23 @@ service cloud.firestore {
     //
     // Staff READ voids but cannot create one. A till operator has to know a sale was
     // cancelled; hiding it would make the orders list lie to them. Creating one erases
-    // revenue, which is the classic till-fraud vector, so that stays with admins.
+    // revenue, which is the classic till-fraud vector, so it always needs an admin.
     //
-    // **Phase 11 did not change that, and this is the point of the design.** Staff can now
-    // START a void, but the write still has to arrive carrying an admin's own token:
-    // `allow create: if isAdmin()` is untouched below. The app obtains that token by having
-    // a manager sign in on a SECOND, in-memory Auth session (src/lib/authorizer.ts) which is
-    // discarded immediately afterwards — the till's own session is never elevated, and no
-    // amount of frontend tampering produces an admin token without admin credentials.
+    // Staff can START a void, and there are exactly two ways it is then authorised:
     //
-    // What that buys, which a PIN could not: Firebase Auth holds the secret and throttles
-    // guesses server-side. Rules cannot rate-limit, and a PIN checked by rules would have to
-    // travel INSIDE the void document, where staff — who may read voids — could lift it and
-    // brute-force four digits offline. See "Why a manager signs in" in README.md.
+    //   * **An admin's six-digit PIN**, the usual way. voidOrderWithAdminPin in functions/
+    //     checks the PIN against a stored hash and writes this document through the Admin SDK,
+    //     which these rules do not judge. A PIN never travels through this rule or sits in a
+    //     document any client can read. See functions/src/void.ts, which restates every
+    //     condition below.
+    //   * **A manager signing in**, the fallback until an admin has set a PIN or if the
+    //     functions cannot be reached. The write then has to arrive carrying an admin's own
+    //     token, so `allow create: if isAdmin()` below applies. It comes from a SECOND,
+    //     in-memory Auth session (src/lib/authorizer.ts) that is discarded immediately
+    //     afterwards, so the till's own session is never elevated.
+    //
+    // An admin voiding their own sale writes here directly. No amount of frontend tampering
+    // produces an admin token without admin credentials.
 
     // The initiator of a void is judged differently from an operator anywhere else, because
     // the void is written by the MANAGER's token: request.auth.uid is the authoriser, so
