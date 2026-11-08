@@ -149,7 +149,8 @@ Browser (React SPA)
 ```text
 ├── public/
 │   ├── manifest.webmanifest    Web app manifest
-│   └── icons/                  Logo, wordmark, favicon and PWA icons
+│   ├── icons/                  Logo, wordmark, favicon and PWA icons
+│   └── screenshots/            Install-dialog screenshots (the empty sign-in page)
 ├── src/
 │   ├── App.tsx                 Routes and providers
 │   ├── main.tsx                Entry point
@@ -256,12 +257,54 @@ To add a language, add its code, endonym and tag in `src/features/i18n/languages
 
 ## PWA & Hosting
 
-- ServeFlow can be installed from the browser as a standalone app. `public/manifest.webmanifest`
-  sets the name, the `standalone` display mode, `/` as start URL and scope, the theme colour, and
-  192 × 192, 512 × 512 and maskable 512 × 512 icons. Orientation is not locked.
-- There is **no service worker and no offline mode**: the app needs a network connection.
-- Firebase Hosting serves the Vite build from `dist/`, rewrites every path to `index.html` for
-  client-side routing, caches hashed assets for a year and always revalidates `index.html`.
+ServeFlow can be installed from the browser as an app. `public/manifest.webmanifest` sets the
+name, a short description, the `standalone` display mode, `/` as start URL and scope, the theme
+colour, 192 × 192, 512 × 512 and maskable 512 × 512 icons, and two screenshots for the install
+dialog. Orientation is not locked, so a tablet can rotate.
+
+### Installing
+
+- **Windows, Chrome or Edge:** open the production URL, then use the install icon at the right of
+  the address bar, or the browser menu's install entry (its wording varies between versions).
+  ServeFlow then has its own window, Start menu entry and taskbar icon.
+- **Android, Chrome:** open the production URL, then choose **Install app** (or **Add to Home
+  screen**) from the ⋮ menu. Chrome may also offer it on its own once the page has been used for
+  a short while.
+- **iPhone and iPad (optional, not tested):** Safari's Share menu, **Add to Home Screen**. The
+  home-screen icon is the full-bleed maskable icon, linked as `apple-touch-icon`.
+
+The install dialog shows the description and the screenshots in `public/screenshots/`: the empty
+sign-in page, wide for desktop and narrow for phones. They must never show real orders, staff,
+customers or prices; retake them from the sign-in page or from synthetic demo data only.
+
+### Running as an installed app
+
+- It opens in its own window without the address bar, at `/`, which leads to sign-in or the
+  signed-in user's start page. Every route stays inside the app.
+- It shares the browser's storage for the site, so signing in or out in one also applies to the
+  other on the same browser profile.
+- With no service worker there is nothing cached to go stale: each launch or reload loads the
+  build currently deployed, exactly like a browser tab. A window left open keeps running the build
+  it loaded, so reload every till after a deploy.
+
+### Online only
+
+ServeFlow is an online-first point of sale. Signing in, the menu, placing an order (priced by
+`placeOrder` on the server), payments, voids and the kitchen queue all need a network connection.
+
+- There is **no service worker and no offline mode**. Nothing is cached for offline use: not the
+  app, not sign-in tokens, not Firestore data, not orders. Firestore uses its in-memory cache only.
+- Without a connection the installed app shows the browser's offline page or a connection error.
+  Orders and payments are never taken offline; that is deliberate, not missing.
+- `tests/unit/web-app-manifest.test.ts` fails if a service worker or worker script is added, so
+  that change has to be made on purpose.
+
+### Hosting
+
+Firebase Hosting serves the Vite build from `dist/` and rewrites every path to `index.html` for
+client-side routing. Hashed files under `/assets/` are cached for a year as immutable; everything
+else, including `index.html`, every route, the manifest, icons and screenshots, is `no-cache`, so
+a browser revalidates it on every load.
 
 ## Getting Started
 

@@ -2,6 +2,7 @@
   "id": "/",
   "name": "ServeFlow",
   "short_name": "ServeFlow",
+  "description": "Point of sale for a café or food vendor: ring up orders, record payments, run the kitchen queue and manage the menu. Staff and administrators sign in with their own accounts. Needs an internet connection; orders and payments are never taken offline.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -25,6 +26,22 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/sign-in-wide.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "ServeFlow sign-in screen on a desktop or counter display"
+    },
+    {
+      "src": "/screenshots/sign-in-narrow.png",
+      "sizes": "780x1688",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "ServeFlow sign-in screen on a phone"
     }
   ]
 }

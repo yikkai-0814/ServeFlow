@@ -25,8 +25,17 @@ interface ManifestIcon {
   purpose: string
 }
 
+interface ManifestScreenshot {
+  src: string
+  sizes: string
+  type: string
+  form_factor: string
+  label: string
+}
+
 const manifest = JSON.parse(read('public/manifest.webmanifest')) as Record<string, unknown> & {
   icons: ManifestIcon[]
+  screenshots: ManifestScreenshot[]
 }
 const html = read('index.html')
 
@@ -38,6 +47,11 @@ function pngSize(publicPath: string): { width: number; height: number } {
   const bytes = readFileSync(join(root, 'public', publicPath))
   expect(bytes.subarray(1, 4).toString('ascii')).toBe('PNG')
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+}
+
+/** The IHDR colour type: 2 is plain RGB, 6 is RGB with an alpha channel. */
+function pngColourType(publicPath: string): number {
+  return readFileSync(join(root, 'public', publicPath))[25]!
 }
 
 describe('the manifest', () => {
@@ -76,12 +90,65 @@ describe('the manifest', () => {
     // Hosting serves public/ at the root, so an icon's path is its file under public/.
     expect(pngSize(icon!.src.slice(1))).toEqual({ width: pixels, height: pixels })
   })
+
+  it('describes the app in what Chrome shows in full, and says it needs a connection', () => {
+    expect(typeof manifest.description).toBe('string')
+    const description = String(manifest.description)
+
+    // Chrome truncates an install-dialog description past 300 characters.
+    expect(description.length).toBeGreaterThan(0)
+    expect(description.length).toBeLessThanOrEqual(300)
+    expect(description).toMatch(/internet connection/)
+  })
+})
+
+/**
+ * The install dialog's screenshots: Chrome shows the richer dialog only with at least one for the
+ * device's form factor. Desktop shows only "wide" ones and Android ignores them, so each needs
+ * its own. They are of the empty sign-in page and nothing else — no order, name or price.
+ */
+describe('the install screenshots', () => {
+  it('offers exactly one wide and one narrow screenshot', () => {
+    expect(manifest.screenshots.map((shot) => shot.form_factor).sort()).toEqual(['narrow', 'wide'])
+  })
+
+  it.each(['wide', 'narrow'])('the %s one is a PNG that matches its stated size', (factor) => {
+    const shot = manifest.screenshots.find((each) => each.form_factor === factor)!
+    expect(shot.type).toBe('image/png')
+    expect(shot.src).toMatch(/^\/screenshots\/sign-in-[a-z]+\.png$/)
+    expect(shot.label.length).toBeGreaterThan(0)
+
+    const { width, height } = pngSize(shot.src.slice(1))
+    expect(shot.sizes).toBe(`${width}x${height}`)
+
+    // Chrome's limits: each side 320–3840 px, the long side at most 2.3 times the short one.
+    for (const side of [width, height]) {
+      expect(side).toBeGreaterThanOrEqual(320)
+      expect(side).toBeLessThanOrEqual(3840)
+    }
+    expect(Math.max(width, height) / Math.min(width, height)).toBeLessThanOrEqual(2.3)
+
+    // Wide is landscape and narrow is portrait, or the form factor is a lie.
+    expect(width > height).toBe(factor === 'wide')
+  })
 })
 
 describe('index.html', () => {
   it('links the manifest from a path Hosting serves as a file, not through the SPA rewrite', () => {
     expect(html).toContain('<link rel="manifest" href="/manifest.webmanifest" />')
     expect(existsSync(resolve(root, 'public/manifest.webmanifest'))).toBe(true)
+  })
+
+  it('gives iOS an existing icon with no transparent corners to fill', () => {
+    const link = /<link rel="apple-touch-icon" href="\/([^"]+)" \/>/.exec(html)
+    expect(link).not.toBeNull()
+
+    // Reuses the full-bleed maskable icon rather than shipping another file: it is opaque
+    // (no alpha channel) and large enough for iOS to scale down.
+    const icon = link![1]!
+    expect(icon).toBe('icons/icon-maskable-512.png')
+    expect(pngSize(icon)).toEqual({ width: 512, height: 512 })
+    expect(pngColourType(icon)).toBe(2)
   })
 
   it('gives the browser tab the ServeFlow ribbon rather than the Vite logo', () => {
