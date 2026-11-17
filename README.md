@@ -322,11 +322,21 @@ before. Container start-up and the token check happen before the handler, so the
 `totalMs`: Cloud Run's own request and system logs have them, joined by the `instanceId` label and
 trace Cloud Run attaches to every line.
 
+**Order warm-up.** After a quiet spell `placeOrder` has no running instance, and the first order
+used to pay for starting one and for its first Firestore connection. The till now sends
+`{ warmup: true }` to `placeOrder` when it opens, when it comes back into view, when an operator is
+chosen and on the first item of an order — never on a timer. The function checks the caller exactly
+as it does for an order (one read of their own profile), logs an `Order warm-up` line holding only
+`perf` timings, and answers `{ warm: true }`: it writes nothing and places nothing. The till sends
+one at a time, none within five minutes of one that succeeded, and only for the account Firebase
+Auth is signed in as; nothing waits for it, and a failure is silent
+(`src/features/pos/order-warmup.ts`). Cloud Run may still serve the order from another instance.
+
 **Browser (off by default).** On the device to measure, run
 `localStorage.setItem('serveflow.perf', '1')` in the DevTools console and reload; remove the key and
 reload to stop. Each measurement then appears as a `[perf]` console line and a `serveflow:` entry
 in the Performance panel: session restore and sign-in, the first answer for each menu collection,
-the order call and Place order → payment question, the PIN status and void calls and a confirmed
+the order warm-up, the order call and Place order → payment question, the PIN status and void calls and a confirmed
 void → shown on the page, and orders reaching the Queue (whose `approxSinceCreatedMs` compares this
 device's clock with the server's, so is only approximate). Nothing is sent anywhere or stored
 (`src/lib/perf.ts`).

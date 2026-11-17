@@ -35,6 +35,7 @@ import {
 import {
   businessDateAt,
   isReadableId,
+  isWarmupRequest,
   MAX_ORDER_BYTES,
   namesMatch,
   parseCatalogueGroup,
@@ -496,6 +497,15 @@ async function readCatalogue(
 export const placeOrder = onCall(async (request) => {
   const perf = timing.begin()
   const caller = await perf.stage('authMs', () => requireActiveCaller(request))
+
+  // A warm-up (see isWarmupRequest): the same caller check, and so the same first read, as an
+  // order — and then nothing. It never reaches the request record, the counter or the
+  // transaction, writes nothing, and answers the same thing to everyone it lets through.
+  if (isWarmupRequest(request.data)) {
+    logger.info('Order warm-up', { perf: perf.finish() })
+    return { warm: true }
+  }
+
   const order = parsePlaceOrderRequest(request.data)
   if (!order) refuse('invalid-argument', 'invalid-request')
 

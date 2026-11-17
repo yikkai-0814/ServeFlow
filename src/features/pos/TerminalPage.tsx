@@ -1,6 +1,6 @@
 import { isMessageError, message, type Message } from '@/features/i18n/messages'
 import { useTranslation } from '@/features/i18n/useTranslation'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, CheckCircle2, CupSoda } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -35,6 +35,7 @@ import {
   type Cart,
 } from '@/features/pos/cart'
 import { PaymentDecision, type PlacedOrder, type Settlement } from '@/features/pos/PaymentDecision'
+import { warmUpOrders } from '@/features/pos/order-warmup'
 import { createOrder } from '@/features/pos/pos-api'
 import { PAYMENT_LABEL_KEYS } from '@/features/pos/types'
 import { formatMoney } from '@/lib/money'
@@ -78,7 +79,7 @@ function OrderPlacedAlert({ order, settlement }: { order: PlacedOrder; settlemen
 
 export function TerminalPage() {
   const { t, language } = useTranslation()
-  const { profile } = useAuth()
+  const { profile, role, status } = useAuth()
   const { operator, loading: staffLoading } = useStaffSession()
   const { categories, loading: categoriesLoading } = useCategories()
   const { items, loading: itemsLoading, error: itemsError } = useMenuItems()
@@ -121,6 +122,34 @@ export function TerminalPage() {
   /** The cart column, which the phone summary bar's "Review order" brings into view. */
   const cartRef = useRef<HTMLElement>(null)
 
+  /**
+   * Gets `placeOrder` ready ahead of the order (see order-warmup.ts), for a loaded staff session
+   * only: no profile, another role, or a session still loading means nothing is sent.
+   *
+   * Fired on things a person does — the till opening, coming back into view, an operator chosen,
+   * the first item rung up — and never on a timer. Never awaited, and wrapped so that nothing it
+   * does, however it fails, can reach the till.
+   */
+  const staffUid = status === 'authenticated' && role === 'staff' ? (profile?.uid ?? null) : null
+  const warmUp = useCallback(() => {
+    if (!staffUid) return
+    try {
+      warmUpOrders(staffUid)
+    } catch {
+      // warmUpOrders does not throw; this is only so that it never can.
+    }
+  }, [staffUid])
+
+  // The till opening for this session, and the till coming back into view.
+  useEffect(() => {
+    warmUp()
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') warmUp()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [warmUp])
+
   // Only what is actually for sale: archived items and hidden categories never reach the
   // till, so staff cannot ring up something the café has taken off the menu.
   const groups = useMemo(() => {
@@ -148,6 +177,8 @@ export function TerminalPage() {
    * item with the same options merges, the same item made differently does not.
    */
   function addConfigured(item: MenuItem, modifiers: SelectedModifier[]) {
+    // The first item of an order: a customer is definitely here.
+    if (cart.length === 0) warmUp()
     setLastOrder(null)
     setError(null)
     setCart((current) =>
@@ -281,6 +312,8 @@ export function TerminalPage() {
           heading="terminal.whoIsMaking"
           blurb="terminal.whoIsMakingBlurb"
           onSelected={() => {
+            // Somebody is starting an order: the clearest sign one is about to be placed.
+            warmUp()
             setOperatorChosen(true)
             // The previous order's confirmation belongs to the previous order.
             setLastOrder(null)

@@ -24,6 +24,7 @@ export type PerfName =
   | 'session.profile'
   | 'login.signIn'
   | 'menu.first'
+  | 'order.warmup'
   | 'order.prepare'
   | 'order.call'
   | 'order.toPaymentStep'

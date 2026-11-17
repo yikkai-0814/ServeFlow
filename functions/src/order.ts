@@ -165,6 +165,20 @@ function configurationOf(line: RequestedLine): string {
   return `${line.menuItemId}|${options.join(',')}`
 }
 
+/**
+ * A warm-up: `{ warmup: true }` and nothing else — no other key, no other value.
+ *
+ * The till sends one shortly before it is likely to place an order, so the first order after a
+ * quiet spell does not also pay for starting the function and opening its first Firestore
+ * connection. Anything that is not exactly this shape is not a warm-up, and is judged as an
+ * order — so an order that happens to carry `warmup: true` is still placed, never skipped.
+ */
+export function isWarmupRequest(data: unknown): boolean {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return false
+  const keys = Object.keys(data)
+  return keys.length === 1 && keys[0] === 'warmup' && (data as { warmup?: unknown }).warmup === true
+}
+
 /** Null if this is not something the till could have sent. Nothing in it is yet believed. */
 export function parsePlaceOrderRequest(data: unknown): PlaceOrderRequest | null {
   if (typeof data !== 'object' || data === null) return null
