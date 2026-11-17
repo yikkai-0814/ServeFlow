@@ -268,6 +268,17 @@ interface VoidRequest {
 export const voidOrderWithAdminPin = onCall(async (request) => {
   const perf = timing.begin()
   const caller = await perf.stage('authMs', () => requireActiveCaller(request))
+
+  // A warm-up (see isWarmupRequest): the same caller check, and so the same first read, as a
+  // void — and then nothing. It returns before the PIN is validated, before any admin or PIN is
+  // read, and before an attempt is spent or reset, so it can neither use, reset nor reveal a
+  // lockout; and it never reads an order or writes a void. Everyone it lets through gets the
+  // same answer.
+  if (isWarmupRequest(request.data)) {
+    logger.info('Void warm-up', { perf: perf.finish() })
+    return { warm: true }
+  }
+
   const data = (request.data ?? {}) as VoidRequest
 
   const { orderId, pin } = data

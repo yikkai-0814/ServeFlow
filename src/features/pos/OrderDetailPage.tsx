@@ -1,7 +1,7 @@
 import { isMessageError, message, MessageError } from '@/features/i18n/messages'
 import type { Message } from '@/features/i18n/messages'
 import { useTranslation } from '@/features/i18n/useTranslation'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { AlertCircle, Ban, ChefHat, Undo2 } from 'lucide-react'
 
@@ -43,6 +43,7 @@ import { useAdminPinAvailable } from '@/features/pos/useAdminPinAvailable'
 import { useOrderDetail } from '@/features/pos/useOrderDetail'
 import { voidOrder } from '@/features/pos/void-api'
 import { voidOrderWithAdminPin } from '@/features/pos/void-pin-api'
+import { warmUpVoids } from '@/features/pos/void-warmup'
 import { VoidOrderDialog } from '@/features/pos/VoidOrderDialog'
 import { isAdminPin, type VoidAuthorization } from '@/features/pos/voids'
 import { lineKeyOf } from '@/features/menu/modifiers'
@@ -59,7 +60,7 @@ import { perfBegin, perfCancel, perfEnd } from '@/lib/perf'
 export function OrderDetailPage() {
   const { t } = useTranslation()
   const { orderId } = useParams<{ orderId: string }>()
-  const { profile, role } = useAuth()
+  const { profile, role, status } = useAuth()
   const { operator } = useStaffSession()
   // One order and its three sidecars, by id — never the whole collection. A receipt is
   // about exactly one sale, and this page used to load every order ever written to find it.
@@ -76,6 +77,43 @@ export function OrderDetailPage() {
   useEffect(() => {
     if (isVoided) perfEnd('void.toBanner')
   }, [isVoided])
+
+  /**
+   * Gets the PIN void function ready before Void Sale is pressed (see void-warmup.ts).
+   *
+   * Only for a loaded staff session looking at a loaded order that can still be voided: an admin
+   * voids with their own session and never calls the function, and a voided order offers no void.
+   * Deliberately not tied to `pinAvailable`, which reads false until the status call answers — the
+   * very moment the page opens, when a warm-up has the most time to help.
+   *
+   * Fired when the order opens, when the page comes back into view and when the void dialog opens —
+   * never on a timer — and all three share void-warmup.ts's one-at-a-time and five-minute rules.
+   * Never awaited, and wrapped so that nothing it does can reach the page or the void.
+   */
+  // `!loading` as well as a view: the order can arrive before its void record does, and until that
+  // has answered, "not voided" is not yet known.
+  const voidWarmUid =
+    status === 'authenticated' && role === 'staff' && !loading && view !== null && !isVoided
+      ? (profile?.uid ?? null)
+      : null
+  const warmUpVoid = useCallback(() => {
+    if (!voidWarmUid) return
+    try {
+      warmUpVoids(voidWarmUid)
+    } catch {
+      // warmUpVoids does not throw; this is only so that it never can.
+    }
+  }, [voidWarmUid])
+
+  // The order opening (or becoming voidable for this session), and the page coming back into view.
+  useEffect(() => {
+    warmUpVoid()
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') warmUpVoid()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [warmUpVoid])
 
   if (loading) {
     return <Skeleton className="h-96 w-full max-w-lg" />
@@ -603,6 +641,7 @@ export function OrderDetailPage() {
             requiresAuthorization={!isAdmin}
             pinAvailable={pinAvailable}
             onConfirm={handleVoid}
+            onOpen={warmUpVoid}
           />
         )}
       </div>

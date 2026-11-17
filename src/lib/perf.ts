@@ -28,6 +28,7 @@ export type PerfName =
   | 'order.prepare'
   | 'order.call'
   | 'order.toPaymentStep'
+  | 'void.warmup'
   | 'void.pinStatus'
   | 'void.call'
   | 'void.toBanner'

@@ -67,6 +67,7 @@ export function VoidOrderDialog({
   requiresAuthorization,
   pinAvailable = false,
   onConfirm,
+  onOpen,
 }: {
   orderNumber: number
   amount: number
@@ -74,6 +75,11 @@ export function VoidOrderDialog({
   /** An administrator has set a PIN, so the second step asks for one instead of a sign-in. */
   pinAvailable?: boolean
   onConfirm: (reason: string, authorization: VoidAuthorization | null) => Promise<void>
+  /**
+   * Told when the dialog opens, and nothing else: it changes nothing here and receives nothing.
+   * The order page uses it to get the void function ready (void-warmup.ts).
+   */
+  onOpen?: () => void
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -108,6 +114,14 @@ export function VoidOrderDialog({
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen && submitting.current) return
     reset(nextOpen)
+    if (nextOpen && !open) {
+      // A notice only: whatever it does or throws, the dialog has already opened as before.
+      try {
+        onOpen?.()
+      } catch {
+        // Nothing the listener does can reach the dialog.
+      }
+    }
   }
 
   const preset = findVoidReasonPreset(presetId)

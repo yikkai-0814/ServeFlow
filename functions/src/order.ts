@@ -168,10 +168,15 @@ function configurationOf(line: RequestedLine): string {
 /**
  * A warm-up: `{ warmup: true }` and nothing else — no other key, no other value.
  *
- * The till sends one shortly before it is likely to place an order, so the first order after a
- * quiet spell does not also pay for starting the function and opening its first Firestore
- * connection. Anything that is not exactly this shape is not a warm-up, and is judged as an
- * order — so an order that happens to carry `warmup: true` is still placed, never skipped.
+ * Used by `placeOrder` and `voidOrderWithAdminPin`. The till sends one to `placeOrder` shortly
+ * before it is likely to place an order, and the order page sends one to `voidOrderWithAdminPin`
+ * before a staff member is likely to void with a PIN, so the first call after a quiet spell does
+ * not also pay for starting the function and opening its first Firestore connection. Each function
+ * answers one only after its usual caller check, and before anything else it does.
+ *
+ * Anything that is not exactly this shape is not a warm-up, and is judged as the real request: an
+ * order that happens to carry `warmup: true` is still placed, and a void that carries it still has
+ * its PIN checked and its attempt spent — never skipped.
  */
 export function isWarmupRequest(data: unknown): boolean {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) return false

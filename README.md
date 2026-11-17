@@ -332,11 +332,21 @@ one at a time, none within five minutes of one that succeeded, and only for the 
 Auth is signed in as; nothing waits for it, and a failure is silent
 (`src/features/pos/order-warmup.ts`). Cloud Run may still serve the order from another instance.
 
+**Void warm-up.** Opening an order calls `getAdminPinStatus`, a separate function, so the first PIN
+void after a quiet spell still paid for starting `voidOrderWithAdminPin`. For staff, the order page
+now sends `{ warmup: true }` to that function when a voidable order opens, when the page comes back
+into view and when the void dialog opens. The function checks the caller exactly as a void does,
+logs a `Void warm-up` line holding only `perf` timings, and answers `{ warm: true }` — before any
+PIN is validated or compared, any attempt is spent, reset or read, or any order is read — so it can
+neither use, reset nor reveal a lockout. It has its own one-at-a-time and five-minute state, and the
+same rules as the order warm-up otherwise (`src/features/pos/void-warmup.ts`).
+
 **Browser (off by default).** On the device to measure, run
 `localStorage.setItem('serveflow.perf', '1')` in the DevTools console and reload; remove the key and
 reload to stop. Each measurement then appears as a `[perf]` console line and a `serveflow:` entry
 in the Performance panel: session restore and sign-in, the first answer for each menu collection,
-the order warm-up, the order call and Place order → payment question, the PIN status and void calls and a confirmed
+the order warm-up, the order call and Place order → payment question, the void warm-up, the PIN
+status and void calls and a confirmed
 void → shown on the page, and orders reaching the Queue (whose `approxSinceCreatedMs` compares this
 device's clock with the server's, so is only approximate). Nothing is sent anywhere or stored
 (`src/lib/perf.ts`).
