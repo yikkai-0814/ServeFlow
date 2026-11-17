@@ -306,6 +306,31 @@ client-side routing. Hashed files under `/assets/` are cached for a year as immu
 else, including `index.html`, every route, the manifest, icons and screenshots, is `no-cache`, so
 a browser revalidates it on every load.
 
+## Measuring performance
+
+Timings only: nothing here changes how an order, a void or a payment is handled, and none of it
+reads or writes Firestore.
+
+**Server.** `placeOrder` and `voidOrderWithAdminPin` add a `perf` object to the line they already
+log on success (`Order placed`, `Order voided with admin PIN`). It holds whole milliseconds per
+stage (`authMs`, `catalogueMs`, `txMs`, `adminLookupMs`, `attemptSpendMs`, `pinCheckMs`,
+`attemptResetMs`, `voidTxMs`) and `totalMs`, attempt counts (`txAttempts`, `attemptSpendAttempts`,
+`voidTxAttempts`), `pinChecks`, `replayed` (an idempotent retry answered with the existing order),
+and `firstRequestOnInstance`, `requestOrdinal`, `instanceAgeMs` and `moduleLoadMs`. It never holds a
+name, id, price, table, reason or PIN (`functions/src/telemetry.ts`). Refused calls log no line, as
+before. Container start-up and the token check happen before the handler, so they are not in
+`totalMs`: Cloud Run's own request and system logs have them, joined by the `instanceId` label and
+trace Cloud Run attaches to every line.
+
+**Browser (off by default).** On the device to measure, run
+`localStorage.setItem('serveflow.perf', '1')` in the DevTools console and reload; remove the key and
+reload to stop. Each measurement then appears as a `[perf]` console line and a `serveflow:` entry
+in the Performance panel: session restore and sign-in, the first answer for each menu collection,
+the order call and Place order → payment question, the PIN status and void calls and a confirmed
+void → shown on the page, and orders reaching the Queue (whose `approxSinceCreatedMs` compares this
+device's clock with the server's, so is only approximate). Nothing is sent anywhere or stored
+(`src/lib/perf.ts`).
+
 ## Getting Started
 
 ### Prerequisites

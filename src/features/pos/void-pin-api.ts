@@ -5,6 +5,7 @@ import { httpsCallable } from 'firebase/functions'
 
 import { ADMIN_PIN_LENGTH } from '@/features/pos/voids'
 import { appFunctions } from '@/lib/functions'
+import { perfOutcome, perfStart } from '@/lib/perf'
 
 /**
  * The app's side of the Admin PIN — three calls to the Cloud Functions in functions/.
@@ -24,7 +25,16 @@ export interface AdminPinStatus {
 
 export async function fetchAdminPinStatus(): Promise<AdminPinStatus> {
   const call = httpsCallable<void, AdminPinStatus>(appFunctions(), 'getAdminPinStatus')
-  return (await call()).data
+  // Timed when src/lib/perf.ts is switched on; the answer and any failure pass through as before.
+  const answered = perfStart('void.pinStatus')
+  try {
+    const { data } = await call()
+    answered?.({ outcome: 'ok' })
+    return data
+  } catch (caught) {
+    answered?.({ outcome: perfOutcome(caught) })
+    throw caught
+  }
 }
 
 export interface VoidWithPinParams {
@@ -53,9 +63,12 @@ export async function voidOrderWithAdminPin(
   { reason, pin, operatorId }: VoidWithPinParams,
 ): Promise<void> {
   const call = httpsCallable(appFunctions(), 'voidOrderWithAdminPin')
+  const called = perfStart('void.call')
   try {
     await call({ orderId, reason, pin, operatorId })
+    called?.({ outcome: 'ok' })
   } catch (caught) {
+    called?.({ outcome: perfOutcome(caught) })
     throw new MessageError(refusalMessage(caught, VOID_REFUSALS, message('order.voidFailed')))
   }
 }

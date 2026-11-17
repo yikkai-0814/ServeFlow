@@ -19,6 +19,7 @@ import {
 } from '@/features/pos/pending-order'
 import { appFunctions } from '@/lib/functions'
 import { formatMoney } from '@/lib/money'
+import { perfOutcome, perfStart } from '@/lib/perf'
 
 export interface CreateOrderParams {
   cart: Cart
@@ -73,6 +74,8 @@ export async function createOrder({
   language,
   uid,
 }: CreateOrderParams): Promise<CreatedOrder> {
+  // Timed when src/lib/perf.ts is switched on: the till's own work, then the call.
+  const prepared = perfStart('order.prepare')
   const validation = validateCart(cart)
   if (!validation.ok) throw new MessageError(validation.error)
 
@@ -103,13 +106,17 @@ export async function createOrder({
   }
 
   const requestId = requestIdFor(uid, await fingerprintOf(request))
+  prepared?.()
 
   const placeOrder = httpsCallable<unknown, CreatedOrder>(appFunctions(), 'placeOrder')
+  const called = perfStart('order.call')
   try {
     const { data } = await placeOrder({ ...request, requestId })
+    called?.({ outcome: 'ok' })
     forgetRequest(uid, requestId)
     return { id: data.id, number: data.number }
   } catch (caught) {
+    called?.({ outcome: perfOutcome(caught) })
     releaseRequest(uid, requestId)
     throw refusalOf(caught, cart)
   }

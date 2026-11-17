@@ -12,6 +12,7 @@ import { AuthContext, type AuthContextValue } from '@/features/auth/auth-context
 import { parseUserProfile, type AuthStatus, type UserProfile } from '@/features/auth/types'
 import { INACTIVE_MESSAGE, NO_PROFILE_MESSAGE } from '@/lib/auth-errors'
 import { auth, db } from '@/lib/firebase'
+import { perfMeasure, perfOutcome, perfStart } from '@/lib/perf'
 
 interface AuthState {
   status: AuthStatus
@@ -28,6 +29,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Holds the unsubscribe for the users/{uid} snapshot listener, which is torn down and
   // recreated every time the signed-in user changes.
   const unsubscribeProfile = useRef<(() => void) | null>(null)
+  /** Whether the session restored on page load has been timed yet (see src/lib/perf.ts). */
+  const sessionTimed = useRef(false)
 
   /** Ends a session the app will not accept, and records why for the login screen. */
   const rejectSession = useCallback(async (reason: Message) => {
@@ -40,6 +43,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const stopAuthListener = onAuthStateChanged(auth, (user) => {
+      // From page load to the saved session being known, once per load.
+      if (!sessionTimed.current) {
+        sessionTimed.current = true
+        perfMeasure('session.auth', 0, { signedIn: user !== null })
+      }
       unsubscribeProfile.current?.()
       unsubscribeProfile.current = null
 
@@ -49,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setState({ status: 'loading', user, profile: null })
+      const profileLoaded = perfStart('session.profile')
 
       // A live subscription rather than a one-off read: an admin flipping `active` to
       // false, or changing someone's role, then takes effect in the open session
@@ -56,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       unsubscribeProfile.current = onSnapshot(
         doc(db, 'users', user.uid),
         (snapshot) => {
+          profileLoaded?.({ fromCache: snapshot.metadata?.fromCache })
           if (!snapshot.exists()) {
             void rejectSession(NO_PROFILE_MESSAGE)
             return
@@ -75,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setState({ status: 'authenticated', user, profile })
         },
         () => {
+          profileLoaded?.({ outcome: 'error' })
           // The rules refused the read, so from the app's point of view this account
           // has no usable profile.
           void rejectSession(NO_PROFILE_MESSAGE)
@@ -91,7 +102,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (email: string, password: string) => {
     setRejectionMessage(null)
-    await signInWithEmailAndPassword(auth, email.trim(), password)
+    const signedIn = perfStart('login.signIn')
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password)
+      signedIn?.({ outcome: 'ok' })
+    } catch (caught) {
+      signedIn?.({ outcome: perfOutcome(caught) })
+      throw caught
+    }
     // The rest of the work — loading the profile and deciding whether to accept the
     // session — happens in the onAuthStateChanged listener above.
   }, [])

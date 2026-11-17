@@ -3,6 +3,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { collection, onSnapshot } from 'firebase/firestore'
 
 import { db } from '@/lib/firebase'
+import { perfStart, type MenuCollection } from '@/lib/perf'
+
+/** The collections whose first answer is timed as menu loading (see src/lib/perf.ts). */
+const MENU_COLLECTIONS: ReadonlySet<string> = new Set<MenuCollection>([
+  'categories',
+  'menuItems',
+  'modifierGroups',
+])
 
 export interface CollectionState<T> {
   data: T[]
@@ -73,6 +81,7 @@ export function useCollectionDocs<T>(
     // No `setState({ loading: true })` here: the initial state already says loading, and
     // `path` is a constant per call site, so re-flagging it would only cause an extra
     // render. The first snapshot clears it.
+    const loaded = MENU_COLLECTIONS.has(path) ? perfStart('menu.first') : null
     const unsubscribe = onSnapshot(
       collection(db, path),
       (snapshot) => {
@@ -82,12 +91,18 @@ export function useCollectionDocs<T>(
           // Skip malformed documents rather than rendering nonsense.
           if (parsed !== null) rows.push(parsed)
         }
+        loaded?.({
+          collection: path as MenuCollection,
+          fromCache: snapshot.metadata?.fromCache,
+          count: rows.length,
+        })
         // Remembered before the render, so the next mount of this collection starts from what
         // it last actually said rather than from nothing.
         lastKnown.set(path, rows)
         setState({ data: rows, loading: false, error: null })
       },
       () => {
+        loaded?.({ collection: path as MenuCollection, outcome: 'error' })
         // A refused or failed read is NOT remembered: the error is shown with no rows, exactly
         // as before, and a later mount retries from scratch rather than inheriting anything.
         setState({

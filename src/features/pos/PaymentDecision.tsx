@@ -1,6 +1,6 @@
 import { message, MessageError, type Message } from '@/features/i18n/messages'
 import { useTranslation } from '@/features/i18n/useTranslation'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Clock, Wallet } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,7 @@ import { RecordPaymentDialog } from '@/features/pos/RecordPaymentDialog'
 import type { PaymentMethod } from '@/features/pos/types'
 import { useOrderDetail } from '@/features/pos/useOrderDetail'
 import { formatMoney } from '@/lib/money'
+import { perfEnd } from '@/lib/perf'
 
 /**
  * An order the till has just written, held while the counter decides how it is paid.
@@ -65,6 +66,9 @@ export function PaymentDecision({
   const { view } = useOrderDetail(order.id)
   /** One outcome per order, however many taps or close events arrive. */
   const settled = useRef(false)
+
+  // Place order → this screen on the page, when timing is switched on (src/lib/perf.ts).
+  useEffect(() => perfEnd('order.toPaymentStep'), [])
 
   function settle(settlement: Settlement) {
     if (settled.current) return

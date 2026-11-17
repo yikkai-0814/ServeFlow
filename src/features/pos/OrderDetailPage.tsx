@@ -1,7 +1,7 @@
 import { isMessageError, message, MessageError } from '@/features/i18n/messages'
 import type { Message } from '@/features/i18n/messages'
 import { useTranslation } from '@/features/i18n/useTranslation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { AlertCircle, Ban, ChefHat, Undo2 } from 'lucide-react'
 
@@ -47,6 +47,7 @@ import { VoidOrderDialog } from '@/features/pos/VoidOrderDialog'
 import { isAdminPin, type VoidAuthorization } from '@/features/pos/voids'
 import { lineKeyOf } from '@/features/menu/modifiers'
 import { formatMoney } from '@/lib/money'
+import { perfBegin, perfCancel, perfEnd } from '@/lib/perf'
 
 /**
  * On-screen receipt.
@@ -67,6 +68,14 @@ export function OrderDetailPage() {
   const pinAvailable = useAdminPinAvailable(role === 'staff')
   const [advancing, setAdvancing] = useState(false)
   const [error, setError] = useState<Message | null>(null)
+
+  // A void confirmed here → the voided record on this page, when timing is switched on
+  // (src/lib/perf.ts). Nothing is pending unless `handleVoid` began it, so opening an order
+  // that is already voided measures nothing.
+  const isVoided = view?.voided != null
+  useEffect(() => {
+    if (isVoided) perfEnd('void.toBanner')
+  }, [isVoided])
 
   if (loading) {
     return <Skeleton className="h-96 w-full max-w-lg" />
@@ -249,6 +258,9 @@ export function OrderDetailPage() {
     setError(null)
 
     const initiatedBy = { staffId: payer.id, staffName: payer.name }
+    perfBegin('void.toBanner', {
+      route: !authorization ? 'admin' : isAdminPin(authorization) ? 'pin' : 'manager',
+    })
 
     try {
       if (authorization && isAdminPin(authorization)) {
@@ -279,6 +291,7 @@ export function OrderDetailPage() {
         })
       }
     } catch (caught) {
+      perfCancel('void.toBanner')
       // withManagerAuthorization already produces a sentence worth reading — a wrong
       // password, a throttled account, credentials that are not a manager's. Anything else
       // is a rules refusal, which needs one written here.

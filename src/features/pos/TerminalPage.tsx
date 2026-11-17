@@ -38,6 +38,7 @@ import { PaymentDecision, type PlacedOrder, type Settlement } from '@/features/p
 import { createOrder } from '@/features/pos/pos-api'
 import { PAYMENT_LABEL_KEYS } from '@/features/pos/types'
 import { formatMoney } from '@/lib/money'
+import { perfBegin, perfCancel } from '@/lib/perf'
 
 /**
  * What was just written, and how it was settled, shown on the screen that asks who is making
@@ -185,6 +186,8 @@ export function TerminalPage() {
    */
   async function placeOrder() {
     if (!profile || !operator || !placement.ok) return
+    // Ended by PaymentDecision when it appears (see src/lib/perf.ts); off unless switched on.
+    perfBegin('order.toPaymentStep')
     setPending(true)
     setError(null)
     const user = { uid: profile.uid, displayName: profile.displayName }
@@ -216,6 +219,7 @@ export function TerminalPage() {
       // here because the cart they came from has just been cleared.
       setAwaitingPayment({ id: created.id, number: created.number, total, service, user, staff })
     } catch (caught) {
+      perfCancel('order.toPaymentStep')
       // Nothing was placed. The cart takes on the current prices and names in plain sight, under
       // the message that says so, and it is placed again only when somebody chooses to.
       if (caught instanceof StaleCartError) {

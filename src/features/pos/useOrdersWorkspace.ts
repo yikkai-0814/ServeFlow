@@ -7,6 +7,7 @@ import { useOrderFulfillments } from '@/features/pos/useOrderFulfillments'
 import { useOrderPayments } from '@/features/pos/useOrderPayments'
 import { useOrders } from '@/features/pos/useOrders'
 import { useOrderVoids } from '@/features/pos/useOrderVoids'
+import { useQueuePerf } from '@/features/pos/useQueuePerf'
 import { holdWorkspace, rememberWorkspace } from '@/features/pos/workspace-handoff'
 
 /**
@@ -46,6 +47,9 @@ export function useOrdersWorkspace(businessDate: string): OrdersWorkspace {
   )
 
   const loading = ordersLoading || paymentsLoading || voidsLoading || fulfillmentsLoading
+
+  // Off unless timing is switched on (src/lib/perf.ts); reads, never changes, what is above.
+  useQueuePerf(businessDate, orders, loading)
 
   // While this page shows the date, its latest complete result is what a page opened in its
   // place starts from — see workspace-handoff.ts. Only complete results are handed over, so a

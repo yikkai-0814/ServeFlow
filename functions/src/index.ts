@@ -66,6 +66,7 @@ import {
   type StoredPin,
   type WindowCount,
 } from './pin'
+import { createInstanceTiming } from './telemetry'
 import { isDocumentId, orderTotalOf, resolveInitiator, validateReason } from './void'
 
 // Closest region to the café; also where the app calls them (src/lib/env.ts).
@@ -73,6 +74,12 @@ setGlobalOptions({ region: 'asia-southeast1', maxInstances: 10 })
 
 initializeApp()
 const db = getFirestore()
+
+/**
+ * Timings for the logs (see telemetry.ts). Made here, once the imports above have loaded, so the
+ * process's uptime at this point is how long loading the code took.
+ */
+const timing = createInstanceTiming(() => performance.now(), process.uptime() * 1000)
 
 const GLOBAL_MONITOR = 'pinAttempts/_global'
 
@@ -258,7 +265,8 @@ interface VoidRequest {
 }
 
 export const voidOrderWithAdminPin = onCall(async (request) => {
-  const caller = await requireActiveCaller(request)
+  const perf = timing.begin()
+  const caller = await perf.stage('authMs', () => requireActiveCaller(request))
   const data = (request.data ?? {}) as VoidRequest
 
   const { orderId, pin } = data
@@ -272,13 +280,15 @@ export const voidOrderWithAdminPin = onCall(async (request) => {
   if (operatorId !== null && !isDocumentId(operatorId))
     refuse('invalid-argument', 'invalid-operator')
 
-  const admins = await activeAdminsWithPins()
+  const admins = await perf.stage('adminLookupMs', () => activeAdminsWithPins())
   if (admins.length === 0) refuse('failed-precondition', 'no-pin')
 
   // Spend one attempt atomically BEFORE checking the PIN — see spendAttempt in pin.ts. A locked
   // account is refused here without the PIN being looked at at all.
   const attemptsRef = db.doc(`pinAttempts/${caller.uid}`)
+  const attemptSpent = perf.start('attemptSpendMs')
   await db.runTransaction(async (transaction) => {
+    perf.count('attemptSpendAttempts')
     const now = Date.now()
     const state = readAttempts(await transaction.get(attemptsRef))
     const remaining = lockRemainingMs(state, now)
@@ -287,11 +297,15 @@ export const voidOrderWithAdminPin = onCall(async (request) => {
     }
     transaction.set(attemptsRef, spendAttempt(state, now))
   })
+  attemptSpent()
 
   const matches: PinAdmin[] = []
+  const pinChecked = perf.start('pinCheckMs')
   for (const admin of admins) {
+    perf.count('pinChecks')
     if (await verifyPin(pin, admin.pin)) matches.push(admin)
   }
+  pinChecked()
 
   if (matches.length === 0) {
     await recordFailure(caller.uid)
@@ -304,7 +318,7 @@ export const voidOrderWithAdminPin = onCall(async (request) => {
   }
 
   // A correct PIN clears this account's count.
-  await attemptsRef.set(NO_ATTEMPTS)
+  await perf.stage('attemptResetMs', () => attemptsRef.set(NO_ATTEMPTS))
 
   if (matches.length > 1) {
     // Setup refuses duplicates, so this means a race or a data problem. Refuse rather than
@@ -314,7 +328,9 @@ export const voidOrderWithAdminPin = onCall(async (request) => {
   }
   const adminUid = matches[0]!.uid
 
+  const voidWritten = perf.start('voidTxMs')
   await db.runTransaction(async (transaction) => {
+    perf.count('voidTxAttempts')
     const orderRef = db.doc(`orders/${orderId}`)
     const voidRef = db.doc(`orderVoids/${orderId}`)
     const adminRef = db.doc(`users/${adminUid}`)
@@ -378,8 +394,14 @@ export const voidOrderWithAdminPin = onCall(async (request) => {
       initiatedByStaffName: initiator.staffName,
     })
   })
+  voidWritten()
 
-  logger.info('Order voided with admin PIN', { orderId, admin: adminUid, requestedBy: caller.uid })
+  logger.info('Order voided with admin PIN', {
+    orderId,
+    admin: adminUid,
+    requestedBy: caller.uid,
+    perf: perf.finish(),
+  })
   return { ok: true }
 })
 
@@ -472,7 +494,8 @@ async function readCatalogue(
  * before the first write, as a Firestore transaction requires.
  */
 export const placeOrder = onCall(async (request) => {
-  const caller = await requireActiveCaller(request)
+  const perf = timing.begin()
+  const caller = await perf.stage('authMs', () => requireActiveCaller(request))
   const order = parsePlaceOrderRequest(request.data)
   if (!order) refuse('invalid-argument', 'invalid-request')
 
@@ -480,8 +503,12 @@ export const placeOrder = onCall(async (request) => {
   const fingerprint = requestFingerprint(order)
   const { operatorId } = order
 
+  const transacted = perf.start('txMs')
   const placed = await db.runTransaction(
     async (transaction) => {
+      // Counted per attempt, and the flag reset with it: only the attempt that commits counts.
+      perf.count('txAttempts')
+      perf.flag('replayed', false)
       const businessDate = businessDateAt(new Date())
       const counterRef = db.doc(`counters/${businessDate}`)
       const callerRef = db.doc(`users/${caller.uid}`)
@@ -498,6 +525,7 @@ export const placeOrder = onCall(async (request) => {
         if (existing.get('uid') !== caller.uid || existing.get('fingerprint') !== fingerprint) {
           refuse('already-exists', 'request-reused')
         }
+        perf.flag('replayed', true)
         return { id: existing.get('orderId') as string, number: existing.get('number') as number }
       }
 
@@ -526,7 +554,9 @@ export const placeOrder = onCall(async (request) => {
       )
       if (!initiator) refuse('failed-precondition', 'invalid-operator')
 
-      const catalogue = await readCatalogue(transaction, order.lines)
+      const catalogue = await perf.stage('catalogueMs', () =>
+        readCatalogue(transaction, order.lines),
+      )
       const priced = priceOrder(order.lines, order.language, catalogue)
       if (!priced.ok) {
         const { ok: _ok, reason, ...details } = priced
@@ -595,8 +625,14 @@ export const placeOrder = onCall(async (request) => {
     // Every sale on a day shares one counter, so simultaneous tills retry against each other.
     { maxAttempts: 10 },
   )
+  transacted()
 
-  logger.info('Order placed', { orderId: placed.id, number: placed.number, uid: caller.uid })
+  logger.info('Order placed', {
+    orderId: placed.id,
+    number: placed.number,
+    uid: caller.uid,
+    perf: perf.finish(),
+  })
   return placed
 })
 
